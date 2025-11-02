@@ -1,0 +1,3892 @@
+{
+  "datasets": [
+    {
+      "name": "91008fdb",
+      "displayName": "statement-level-detail",
+      "queryLines": [
+        "with workspaces as (\n",
+        "     select workspace_id,\n",
+        "            workspace_name,\n",
+        "            workspace_url\n",
+        "       from system.access.workspaces_latest\n",
+        "), warehouse_scd as (\n",
+        "     select wh.*,\n",
+        "            w.workspace_name,\n",
+        "            w.workspace_url,\n",
+        "            wh.change_time as valid_from,\n",
+        "            lead(wh.change_time) over (\n",
+        "                partition by wh.workspace_id, wh.warehouse_id\n",
+        "                order by wh.change_time\n",
+        "            ) as valid_to,\n",
+        "            case\n",
+        "                when row_number() over (partition by wh.workspace_id, wh.warehouse_id order by wh.change_time) = 1 then 'add'\n",
+        "                when lead(wh.change_time) over (partition by wh.workspace_id, wh.warehouse_id order by wh.change_time) is null then 'delete'\n",
+        "                else 'update'\n",
+        "            end as change_op\n",
+        "       from system.compute.warehouses wh\n",
+        "       left join workspaces w\n",
+        "         on w.workspace_id = wh.workspace_id\n",
+        "), query_history as (\n",
+        "     select q.query_source.dashboard_id as dashboard_id,\n",
+        "            q.*,\n",
+        "            wh.warehouse_name || ' (' || wh.warehouse_id || ')' as warehouse,\n",
+        "            wh.workspace_name,\n",
+        "            wh.workspace_url,\n",
+        "            wh.workspace_url || '/dashboardsv3/' || q.query_source.dashboard_id || '/published' as dashboard_url,\n",
+        "            wh.workspace_url || '/sql/history?queryId=' || q.statement_id as statement_url,\n",
+        "            wh.workspace_url || '/sql/warehouses/' || wh.warehouse_id || '/monitoring' as warehouse_url,\n",
+        "            total_duration_ms / 1000    as total_duration_sec\n",
+        "       from system.query.history q\n",
+        "       left join warehouse_scd wh\n",
+        "         on q.compute.warehouse_id = wh.warehouse_id\n",
+        "        and q.start_time between wh.valid_from and coalesce(wh.valid_to, current_timestamp())\n",
+        "      where q.compute.warehouse_id is not null\n",
+        "        and q.query_source.dashboard_id is not null\n",
+        "        and start_time between cast(:time_range.min as timestamp) AND cast(:time_range.max as timestamp)\n",
+        ")\n",
+        "select *\n",
+        "  from query_history\n",
+        " where dashboard_id = :dashboard_id\n",
+        "   and total_duration_sec > :min_total_duration_sec"
+      ],
+      "parameters": [
+        {
+          "displayName": "time_range",
+          "keyword": "time_range",
+          "dataType": "DATETIME",
+          "complexType": "RANGE",
+          "defaultSelection": {
+            "range": {
+              "dataType": "DATETIME",
+              "min": {
+                "value": "now-7d/d"
+              },
+              "max": {
+                "value": "now/d"
+              }
+            }
+          }
+        },
+        {
+          "displayName": "dashboard_id",
+          "keyword": "dashboard_id",
+          "dataType": "STRING",
+          "defaultSelection": {
+            "values": {
+              "dataType": "STRING",
+              "values": [
+                {
+                  "value": "x"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "displayName": "min_total_duration_sec",
+          "keyword": "min_total_duration_sec",
+          "dataType": "STRING",
+          "defaultSelection": {
+            "values": {
+              "dataType": "STRING",
+              "values": [
+                {
+                  "value": "600"
+                }
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "273f7b81",
+      "displayName": "should-be-cached",
+      "queryLines": [
+        "with workspaces as (\n",
+        "     select workspace_id,\n",
+        "            workspace_name,\n",
+        "            workspace_url\n",
+        "       from system.access.workspaces_latest\n",
+        "), warehouse_scd as (\n",
+        "     select wh.*,\n",
+        "            w.workspace_name,\n",
+        "            w.workspace_url,\n",
+        "            wh.change_time as valid_from,\n",
+        "            lead(wh.change_time) over (\n",
+        "                partition by wh.workspace_id, wh.warehouse_id\n",
+        "                order by wh.change_time\n",
+        "            ) as valid_to,\n",
+        "            case\n",
+        "                when row_number() over (partition by wh.workspace_id, wh.warehouse_id order by wh.change_time) = 1 then 'add'\n",
+        "                when lead(wh.change_time) over (partition by wh.workspace_id, wh.warehouse_id order by wh.change_time) is null then 'delete'\n",
+        "                else 'update'\n",
+        "            end as change_op\n",
+        "       from system.compute.warehouses wh\n",
+        "       left join workspaces w\n",
+        "         on w.workspace_id = wh.workspace_id\n",
+        "), query_history as (\n",
+        "     select date(q.start_time)          as start_date,\n",
+        "            q.statement_text            as statement_text,\n",
+        "            q.statement_id              as statement_id,\n",
+        "            q.query_source.dashboard_id as dashboard_id,\n",
+        "            wh.workspace_url || '/dashboardsv3/' || q.query_source.dashboard_id || '/published' as dashboard_url,\n",
+        "            total_duration_ms / 1000    as total_duration_sec,\n",
+        "            q.client_application        as client_application,\n",
+        "            q.produced_rows             as produced_rows,\n",
+        "            q.from_result_cache         as from_result_cache,\n",
+        "            wh.workspace_url || '/sql/history?queryId=' || q.statement_id as statement_url,\n",
+        "            q.read_bytes / 1024 / 1024 / 1024 as read_gb,\n",
+        "            q.written_bytes / 1024 / 1024 / 1024 as written_gb\n",
+        "       from system.query.history q\n",
+        "       left join warehouse_scd wh\n",
+        "         on q.compute.warehouse_id = wh.warehouse_id\n",
+        "        and q.start_time between wh.valid_from and coalesce(wh.valid_to, current_timestamp())\n",
+        "      where q.compute.warehouse_id is not null\n",
+        "        and q.query_source.dashboard_id is not null\n",
+        "        and start_time between cast(:time_range.min as timestamp) AND cast(:time_range.max as timestamp)\n",
+        ")\n",
+        "select statement_text,\n",
+        "       dashboard_id,\n",
+        "       dashboard_url,\n",
+        "       avg(total_duration_sec)                  as avg_duration_sec,\n",
+        "       min(read_gb)                             as min_read_gb,\n",
+        "       max(read_gb)                             as max_read_gb,\n",
+        "       avg(read_gb)                             as avg_read_gb,\n",
+        "       count(1)                                 as query_count,\n",
+        "       slice(collect_set(statement_id), 1, 20)  as statements\n",
+        "  from query_history\n",
+        " where client_application = 'Databricks SQL Dashboard'\n",
+        "   and produced_rows >= :produced_rows_min\n",
+        "   and (produced_rows <= :produced_rows_max or :produced_rows_max = 'All')\n",
+        "   and array_contains(:from_result_cache, cast(from_result_cache as string))\n",
+        "   and total_duration_sec > :min_total_duration_sec\n",
+        "   and read_gb > :min_read_gb\n",
+        " group by all\n",
+        " order by query_count desc,\n",
+        "          avg_duration_sec desc"
+      ],
+      "parameters": [
+        {
+          "displayName": "min_total_duration_sec",
+          "keyword": "min_total_duration_sec",
+          "dataType": "STRING",
+          "defaultSelection": {
+            "values": {
+              "dataType": "STRING",
+              "values": [
+                {
+                  "value": "600"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "displayName": "time_range",
+          "keyword": "time_range",
+          "dataType": "DATETIME",
+          "complexType": "RANGE",
+          "defaultSelection": {
+            "range": {
+              "dataType": "DATETIME",
+              "min": {
+                "value": "now-24h/h"
+              },
+              "max": {
+                "value": "now/h"
+              }
+            }
+          }
+        },
+        {
+          "displayName": "min_read_gb",
+          "keyword": "min_read_gb",
+          "dataType": "STRING",
+          "defaultSelection": {
+            "values": {
+              "dataType": "STRING",
+              "values": [
+                {
+                  "value": "1"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "displayName": "produced_rows_min",
+          "keyword": "produced_rows_min",
+          "dataType": "STRING",
+          "defaultSelection": {
+            "values": {
+              "dataType": "STRING",
+              "values": [
+                {
+                  "value": "0"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "displayName": "produced_rows_max",
+          "keyword": "produced_rows_max",
+          "dataType": "STRING",
+          "defaultSelection": {
+            "values": {
+              "dataType": "STRING",
+              "values": [
+                {
+                  "value": "All"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "displayName": "from_result_cache",
+          "keyword": "from_result_cache",
+          "dataType": "STRING",
+          "complexType": "MULTI",
+          "defaultSelection": {
+            "values": {
+              "dataType": "STRING",
+              "values": [
+                {
+                  "value": "false"
+                },
+                {
+                  "value": "true"
+                }
+              ]
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "pages": [
+    {
+      "name": "d5fa3b00",
+      "displayName": "Query activity",
+      "layout": [
+        {
+          "widget": {
+            "name": "9063c250",
+            "queries": [
+              {
+                "name": "parameter_dashboards/01f0b5dbfe57149cab30e34b2a55e4c6/datasets/01f0b5dd70dc1f2aaba819c8fdbbc8be_time_range",
+                "query": {
+                  "datasetName": "273f7b81",
+                  "parameters": [
+                    {
+                      "name": "time_range",
+                      "keyword": "time_range"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "filter-date-range-picker",
+              "encodings": {
+                "fields": [
+                  {
+                    "parameterName": "time_range",
+                    "queryName": "parameter_dashboards/01f0b5dbfe57149cab30e34b2a55e4c6/datasets/01f0b5dd70dc1f2aaba819c8fdbbc8be_time_range"
+                  }
+                ]
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Time range",
+                "showDescription": false
+              }
+            }
+          },
+          "position": {
+            "x": 4,
+            "y": 0,
+            "width": 2,
+            "height": 3
+          }
+        },
+        {
+          "widget": {
+            "name": "206b5684",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "273f7b81",
+                  "fields": [
+                    {
+                      "name": "sum(query_count)",
+                      "expression": "SUM(`query_count`)"
+                    },
+                    {
+                      "name": "dashboard_id",
+                      "expression": "`dashboard_id`"
+                    }
+                  ],
+                  "parameterValues": [
+                    {
+                      "keyword": "min_total_duration_sec",
+                      "selection": {
+                        "values": {
+                          "dataType": "STRING",
+                          "values": [
+                            {
+                              "value": "0"
+                            }
+                          ]
+                        }
+                      }
+                    },
+                    {
+                      "keyword": "from_result_cache",
+                      "selection": {}
+                    },
+                    {
+                      "keyword": "min_read_gb",
+                      "selection": {
+                        "values": {
+                          "dataType": "STRING",
+                          "values": [
+                            {
+                              "value": "0"
+                            }
+                          ]
+                        }
+                      }
+                    },
+                    {
+                      "keyword": "produced_rows_min",
+                      "selection": {
+                        "values": {
+                          "dataType": "STRING",
+                          "values": [
+                            {
+                              "value": "0"
+                            }
+                          ]
+                        }
+                      }
+                    },
+                    {
+                      "keyword": "produced_rows_max",
+                      "selection": {
+                        "values": {
+                          "dataType": "STRING",
+                          "values": [
+                            {
+                              "value": "All"
+                            }
+                          ]
+                        }
+                      }
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 3,
+              "widgetType": "bar",
+              "encodings": {
+                "x": {
+                  "fieldName": "sum(query_count)",
+                  "scale": {
+                    "type": "quantitative"
+                  },
+                  "axis": {
+                    "title": "total query count"
+                  }
+                },
+                "y": {
+                  "fieldName": "dashboard_id",
+                  "scale": {
+                    "type": "categorical",
+                    "categorySize": {
+                      "type": "number-of-categories",
+                      "number": 20
+                    },
+                    "sort": {
+                      "by": "x-reversed"
+                    }
+                  },
+                  "axis": {
+                    "title": "dashboard id"
+                  }
+                },
+                "label": {
+                  "show": false
+                }
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 3,
+            "width": 6,
+            "height": 12
+          }
+        },
+        {
+          "widget": {
+            "name": "0ca6d5ae",
+            "multilineTextboxSpec": {
+              "lines": [
+                "## Total query count\n",
+                "\n",
+                "This is to look for dashboards that are either refreshing too frequently or just have too many things executing on each page.\n",
+                "\n",
+                "To drill down to statement-level detail right click on a bar and select:\n",
+                "\n",
+                "```py\n",
+                "Drill to > Statement drill down\n",
+                "```"
+              ]
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 0,
+            "width": 4,
+            "height": 3
+          }
+        },
+        {
+          "widget": {
+            "name": "5534625b",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "273f7b81",
+                  "fields": [
+                    {
+                      "name": "dashboard_id",
+                      "expression": "`dashboard_id`"
+                    },
+                    {
+                      "name": "query_count",
+                      "expression": "`query_count`"
+                    },
+                    {
+                      "name": "avg_duration_sec",
+                      "expression": "`avg_duration_sec`"
+                    },
+                    {
+                      "name": "avg_read_gb",
+                      "expression": "`avg_read_gb`"
+                    },
+                    {
+                      "name": "dashboard_url",
+                      "expression": "`dashboard_url`"
+                    }
+                  ],
+                  "parameterValues": [
+                    {
+                      "keyword": "min_total_duration_sec",
+                      "selection": {
+                        "values": {
+                          "dataType": "STRING",
+                          "values": [
+                            {
+                              "value": "0"
+                            }
+                          ]
+                        }
+                      }
+                    },
+                    {
+                      "keyword": "min_read_gb",
+                      "selection": {
+                        "values": {
+                          "dataType": "STRING",
+                          "values": [
+                            {
+                              "value": "0"
+                            }
+                          ]
+                        }
+                      }
+                    },
+                    {
+                      "keyword": "produced_rows_min",
+                      "selection": {
+                        "values": {
+                          "dataType": "STRING",
+                          "values": [
+                            {
+                              "value": "0"
+                            }
+                          ]
+                        }
+                      }
+                    },
+                    {
+                      "keyword": "produced_rows_max",
+                      "selection": {
+                        "values": {
+                          "dataType": "STRING",
+                          "values": [
+                            {
+                              "value": "All"
+                            }
+                          ]
+                        }
+                      }
+                    },
+                    {
+                      "keyword": "from_result_cache",
+                      "selection": {
+                        "values": {
+                          "dataType": "STRING",
+                          "values": [
+                            {
+                              "value": "false"
+                            },
+                            {
+                              "value": "true"
+                            }
+                          ]
+                        }
+                      }
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "version": 1,
+              "widgetType": "table",
+              "encodings": {
+                "columns": [
+                  {
+                    "fieldName": "dashboard_id",
+                    "booleanValues": [
+                      "false",
+                      "true"
+                    ],
+                    "imageUrlTemplate": "{{ @ }}",
+                    "imageTitleTemplate": "{{ @ }}",
+                    "imageWidth": "",
+                    "imageHeight": "",
+                    "linkUrlTemplate": "{{ dashboard_url }}",
+                    "linkTextTemplate": "{{ @ }}",
+                    "linkTitleTemplate": "{{ @ }}",
+                    "linkOpenInNewTab": true,
+                    "type": "string",
+                    "displayAs": "link",
+                    "visible": true,
+                    "order": 1,
+                    "title": "dashboard_id",
+                    "allowSearch": false,
+                    "alignContent": "left",
+                    "allowHTML": false,
+                    "highlightLinks": false,
+                    "useMonospaceFont": false,
+                    "preserveWhitespace": false
+                  },
+                  {
+                    "fieldName": "query_count",
+                    "numberFormat": "0",
+                    "booleanValues": [
+                      "false",
+                      "true"
+                    ],
+                    "imageUrlTemplate": "{{ @ }}",
+                    "imageTitleTemplate": "{{ @ }}",
+                    "imageWidth": "",
+                    "imageHeight": "",
+                    "linkUrlTemplate": "{{ @ }}",
+                    "linkTextTemplate": "{{ @ }}",
+                    "linkTitleTemplate": "{{ @ }}",
+                    "linkOpenInNewTab": true,
+                    "type": "integer",
+                    "displayAs": "number",
+                    "visible": true,
+                    "order": 2,
+                    "title": "query_count",
+                    "allowSearch": false,
+                    "alignContent": "right",
+                    "allowHTML": false,
+                    "highlightLinks": false,
+                    "useMonospaceFont": false,
+                    "preserveWhitespace": false
+                  },
+                  {
+                    "fieldName": "avg_duration_sec",
+                    "numberFormat": "0.00",
+                    "booleanValues": [
+                      "false",
+                      "true"
+                    ],
+                    "imageUrlTemplate": "{{ @ }}",
+                    "imageTitleTemplate": "{{ @ }}",
+                    "imageWidth": "",
+                    "imageHeight": "",
+                    "linkUrlTemplate": "{{ @ }}",
+                    "linkTextTemplate": "{{ @ }}",
+                    "linkTitleTemplate": "{{ @ }}",
+                    "linkOpenInNewTab": true,
+                    "type": "float",
+                    "displayAs": "number",
+                    "visible": true,
+                    "order": 3,
+                    "title": "avg_duration_sec",
+                    "allowSearch": false,
+                    "alignContent": "right",
+                    "allowHTML": false,
+                    "highlightLinks": false,
+                    "useMonospaceFont": false,
+                    "preserveWhitespace": false
+                  },
+                  {
+                    "fieldName": "avg_read_gb",
+                    "numberFormat": "0.00",
+                    "booleanValues": [
+                      "false",
+                      "true"
+                    ],
+                    "imageUrlTemplate": "{{ @ }}",
+                    "imageTitleTemplate": "{{ @ }}",
+                    "imageWidth": "",
+                    "imageHeight": "",
+                    "linkUrlTemplate": "{{ @ }}",
+                    "linkTextTemplate": "{{ @ }}",
+                    "linkTitleTemplate": "{{ @ }}",
+                    "linkOpenInNewTab": true,
+                    "type": "float",
+                    "displayAs": "number",
+                    "visible": true,
+                    "order": 4,
+                    "title": "avg_read_gb",
+                    "allowSearch": false,
+                    "alignContent": "right",
+                    "allowHTML": false,
+                    "highlightLinks": false,
+                    "useMonospaceFont": false,
+                    "preserveWhitespace": false
+                  }
+                ]
+              },
+              "invisibleColumns": [
+                {
+                  "booleanValues": [
+                    "false",
+                    "true"
+                  ],
+                  "imageUrlTemplate": "{{ @ }}",
+                  "imageTitleTemplate": "{{ @ }}",
+                  "imageWidth": "",
+                  "imageHeight": "",
+                  "linkUrlTemplate": "{{ @ }}",
+                  "linkTextTemplate": "{{ @ }}",
+                  "linkTitleTemplate": "{{ @ }}",
+                  "linkOpenInNewTab": true,
+                  "name": "statement_text",
+                  "type": "string",
+                  "displayAs": "string",
+                  "order": 0,
+                  "title": "statement_text",
+                  "allowSearch": false,
+                  "alignContent": "left",
+                  "allowHTML": false,
+                  "highlightLinks": false,
+                  "useMonospaceFont": false,
+                  "preserveWhitespace": false
+                },
+                {
+                  "booleanValues": [
+                    "false",
+                    "true"
+                  ],
+                  "imageUrlTemplate": "{{ @ }}",
+                  "imageTitleTemplate": "{{ @ }}",
+                  "imageWidth": "",
+                  "imageHeight": "",
+                  "linkUrlTemplate": "{{ @ }}",
+                  "linkTextTemplate": "{{ @ }}",
+                  "linkTitleTemplate": "{{ @ }}",
+                  "linkOpenInNewTab": true,
+                  "name": "dashboard_url",
+                  "type": "string",
+                  "displayAs": "string",
+                  "order": 5,
+                  "title": "dashboard_url",
+                  "allowSearch": false,
+                  "alignContent": "left",
+                  "allowHTML": false,
+                  "highlightLinks": false,
+                  "useMonospaceFont": false,
+                  "preserveWhitespace": false
+                },
+                {
+                  "numberFormat": "0.00",
+                  "booleanValues": [
+                    "false",
+                    "true"
+                  ],
+                  "imageUrlTemplate": "{{ @ }}",
+                  "imageTitleTemplate": "{{ @ }}",
+                  "imageWidth": "",
+                  "imageHeight": "",
+                  "linkUrlTemplate": "{{ @ }}",
+                  "linkTextTemplate": "{{ @ }}",
+                  "linkTitleTemplate": "{{ @ }}",
+                  "linkOpenInNewTab": true,
+                  "name": "min_read_gb",
+                  "type": "float",
+                  "displayAs": "number",
+                  "order": 6,
+                  "title": "min_read_gb",
+                  "allowSearch": false,
+                  "alignContent": "right",
+                  "allowHTML": false,
+                  "highlightLinks": false,
+                  "useMonospaceFont": false,
+                  "preserveWhitespace": false
+                },
+                {
+                  "numberFormat": "0.00",
+                  "booleanValues": [
+                    "false",
+                    "true"
+                  ],
+                  "imageUrlTemplate": "{{ @ }}",
+                  "imageTitleTemplate": "{{ @ }}",
+                  "imageWidth": "",
+                  "imageHeight": "",
+                  "linkUrlTemplate": "{{ @ }}",
+                  "linkTextTemplate": "{{ @ }}",
+                  "linkTitleTemplate": "{{ @ }}",
+                  "linkOpenInNewTab": true,
+                  "name": "max_read_gb",
+                  "type": "float",
+                  "displayAs": "number",
+                  "order": 7,
+                  "title": "max_read_gb",
+                  "allowSearch": false,
+                  "alignContent": "right",
+                  "allowHTML": false,
+                  "highlightLinks": false,
+                  "useMonospaceFont": false,
+                  "preserveWhitespace": false
+                },
+                {
+                  "booleanValues": [
+                    "false",
+                    "true"
+                  ],
+                  "imageUrlTemplate": "{{ @ }}",
+                  "imageTitleTemplate": "{{ @ }}",
+                  "imageWidth": "",
+                  "imageHeight": "",
+                  "linkUrlTemplate": "{{ @ }}",
+                  "linkTextTemplate": "{{ @ }}",
+                  "linkTitleTemplate": "{{ @ }}",
+                  "linkOpenInNewTab": true,
+                  "name": "statements",
+                  "type": "complex",
+                  "displayAs": "json",
+                  "order": 8,
+                  "title": "statements",
+                  "allowSearch": false,
+                  "alignContent": "left",
+                  "allowHTML": false,
+                  "highlightLinks": false,
+                  "useMonospaceFont": false,
+                  "preserveWhitespace": false
+                }
+              ],
+              "allowHTMLByDefault": false,
+              "itemsPerPage": 25,
+              "paginationSize": "default",
+              "condensed": true,
+              "withRowNumber": false,
+              "frame": {
+                "showTitle": true,
+                "showDescription": true,
+                "title": "Dashboard detail",
+                "description": "Click through for dashboards with top level aggregated metrics\n"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 15,
+            "width": 6,
+            "height": 7
+          }
+        }
+      ],
+      "pageType": "PAGE_TYPE_CANVAS"
+    },
+    {
+      "name": "c56ada2e",
+      "displayName": "Query analysis",
+      "layout": [
+        {
+          "widget": {
+            "name": "bb10ba1f",
+            "queries": [
+              {
+                "name": "parameter_dashboards/01f0b5dbfe57149cab30e34b2a55e4c6/datasets/01f0b5dd70dc1f2aaba819c8fdbbc8be_time_range",
+                "query": {
+                  "datasetName": "273f7b81",
+                  "parameters": [
+                    {
+                      "name": "time_range",
+                      "keyword": "time_range"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "filter-date-range-picker",
+              "encodings": {
+                "fields": [
+                  {
+                    "parameterName": "time_range",
+                    "queryName": "parameter_dashboards/01f0b5dbfe57149cab30e34b2a55e4c6/datasets/01f0b5dd70dc1f2aaba819c8fdbbc8be_time_range"
+                  }
+                ]
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Time range",
+                "showDescription": false
+              }
+            }
+          },
+          "position": {
+            "x": 3,
+            "y": 0,
+            "width": 2,
+            "height": 3
+          }
+        },
+        {
+          "widget": {
+            "name": "279a02d2",
+            "queries": [
+              {
+                "name": "parameter_dashboards/01f0b5dbfe57149cab30e34b2a55e4c6/datasets/01f0b5dd70dc1f2aaba819c8fdbbc8be_min_total_duration_sec",
+                "query": {
+                  "datasetName": "273f7b81",
+                  "parameters": [
+                    {
+                      "name": "min_total_duration_sec",
+                      "keyword": "min_total_duration_sec"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "filter-single-select",
+              "encodings": {
+                "fields": [
+                  {
+                    "parameterName": "min_total_duration_sec",
+                    "queryName": "parameter_dashboards/01f0b5dbfe57149cab30e34b2a55e4c6/datasets/01f0b5dd70dc1f2aaba819c8fdbbc8be_min_total_duration_sec"
+                  }
+                ]
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Min duration (secs)",
+                "showDescription": true,
+                "description": "Only show queries running longer than this"
+              }
+            }
+          },
+          "position": {
+            "x": 4,
+            "y": 3,
+            "width": 1,
+            "height": 2
+          }
+        },
+        {
+          "widget": {
+            "name": "ae1460ed",
+            "queries": [
+              {
+                "name": "parameter_dashboards/01f0b5dbfe57149cab30e34b2a55e4c6/datasets/01f0b5dd70dc1f2aaba819c8fdbbc8be_min_read_gb",
+                "query": {
+                  "datasetName": "273f7b81",
+                  "parameters": [
+                    {
+                      "name": "min_read_gb",
+                      "keyword": "min_read_gb"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "filter-single-select",
+              "encodings": {
+                "fields": [
+                  {
+                    "parameterName": "min_read_gb",
+                    "queryName": "parameter_dashboards/01f0b5dbfe57149cab30e34b2a55e4c6/datasets/01f0b5dd70dc1f2aaba819c8fdbbc8be_min_read_gb"
+                  }
+                ]
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Read data minimum (GB)",
+                "showDescription": true,
+                "description": "Only show queries reading more than this"
+              }
+            }
+          },
+          "position": {
+            "x": 3,
+            "y": 3,
+            "width": 1,
+            "height": 2
+          }
+        },
+        {
+          "widget": {
+            "name": "2883286a",
+            "queries": [
+              {
+                "name": "parameter_dashboards/01f0b5dbfe57149cab30e34b2a55e4c6/datasets/01f0b5dd70dc1f2aaba819c8fdbbc8be_from_result_cache",
+                "query": {
+                  "datasetName": "273f7b81",
+                  "parameters": [
+                    {
+                      "name": "from_result_cache",
+                      "keyword": "from_result_cache"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "filter-multi-select",
+              "encodings": {
+                "fields": [
+                  {
+                    "parameterName": "from_result_cache",
+                    "queryName": "parameter_dashboards/01f0b5dbfe57149cab30e34b2a55e4c6/datasets/01f0b5dd70dc1f2aaba819c8fdbbc8be_from_result_cache"
+                  }
+                ]
+              },
+              "selection": {
+                "defaultSelection": {
+                  "values": {
+                    "dataType": "STRING",
+                    "values": [
+                      {
+                        "value": "false"
+                      },
+                      {
+                        "value": "true"
+                      }
+                    ]
+                  }
+                }
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "From results cache",
+                "showDescription": true,
+                "description": "Did we use the query cache?"
+              }
+            }
+          },
+          "position": {
+            "x": 5,
+            "y": 3,
+            "width": 1,
+            "height": 2
+          }
+        },
+        {
+          "widget": {
+            "name": "ce434b72",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "273f7b81",
+                  "fields": [
+                    {
+                      "name": "sum(query_count)",
+                      "expression": "SUM(`query_count`)"
+                    },
+                    {
+                      "name": "dashboard_id",
+                      "expression": "`dashboard_id`"
+                    }
+                  ],
+                  "parameterValues": [
+                    {
+                      "keyword": "produced_rows_min",
+                      "selection": {
+                        "values": {
+                          "dataType": "STRING",
+                          "values": [
+                            {
+                              "value": "0"
+                            }
+                          ]
+                        }
+                      }
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 3,
+              "widgetType": "bar",
+              "encodings": {
+                "x": {
+                  "fieldName": "sum(query_count)",
+                  "scale": {
+                    "type": "quantitative"
+                  },
+                  "axis": {
+                    "title": "query count"
+                  }
+                },
+                "y": {
+                  "fieldName": "dashboard_id",
+                  "scale": {
+                    "type": "categorical",
+                    "sort": {
+                      "by": "x-reversed"
+                    }
+                  },
+                  "axis": {
+                    "title": "dashboard id"
+                  }
+                }
+              },
+              "frame": {
+                "showTitle": true,
+                "showDescription": true,
+                "title": "Queries by dashboard",
+                "description": "Looking for dashboards with queries matching the filter criteria above (GBs read, duration in secs, result cache usage)"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 5,
+            "width": 6,
+            "height": 9
+          }
+        },
+        {
+          "widget": {
+            "name": "7c007ef4",
+            "queries": [
+              {
+                "name": "parameter_dashboards/01f0b5dbfe57149cab30e34b2a55e4c6/datasets/01f0b5dd70dc1f2aaba819c8fdbbc8be_produced_rows_max",
+                "query": {
+                  "datasetName": "273f7b81",
+                  "parameters": [
+                    {
+                      "name": "produced_rows_max",
+                      "keyword": "produced_rows_max"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "filter-single-select",
+              "encodings": {
+                "fields": [
+                  {
+                    "parameterName": "produced_rows_max",
+                    "queryName": "parameter_dashboards/01f0b5dbfe57149cab30e34b2a55e4c6/datasets/01f0b5dd70dc1f2aaba819c8fdbbc8be_produced_rows_max"
+                  }
+                ]
+              },
+              "frame": {
+                "showTitle": true,
+                "showDescription": true,
+                "title": "Produced rows maximum",
+                "description": "Only show queries returning less than this many rows"
+              }
+            }
+          },
+          "position": {
+            "x": 5,
+            "y": 0,
+            "width": 1,
+            "height": 3
+          }
+        },
+        {
+          "widget": {
+            "name": "7f1b3456",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "273f7b81",
+                  "fields": [
+                    {
+                      "name": "statement_text",
+                      "expression": "`statement_text`"
+                    },
+                    {
+                      "name": "dashboard_id",
+                      "expression": "`dashboard_id`"
+                    },
+                    {
+                      "name": "avg_duration_sec",
+                      "expression": "`avg_duration_sec`"
+                    },
+                    {
+                      "name": "min_read_gb",
+                      "expression": "`min_read_gb`"
+                    },
+                    {
+                      "name": "max_read_gb",
+                      "expression": "`max_read_gb`"
+                    },
+                    {
+                      "name": "avg_read_gb",
+                      "expression": "`avg_read_gb`"
+                    },
+                    {
+                      "name": "query_count",
+                      "expression": "`query_count`"
+                    },
+                    {
+                      "name": "statements",
+                      "expression": "`statements`"
+                    },
+                    {
+                      "name": "dashboard_url",
+                      "expression": "`dashboard_url`"
+                    }
+                  ],
+                  "parameterValues": [
+                    {
+                      "keyword": "produced_rows_min",
+                      "selection": {
+                        "values": {
+                          "dataType": "STRING",
+                          "values": [
+                            {
+                              "value": "0"
+                            }
+                          ]
+                        }
+                      }
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "version": 1,
+              "widgetType": "table",
+              "encodings": {
+                "columns": [
+                  {
+                    "fieldName": "statement_text",
+                    "booleanValues": [
+                      "false",
+                      "true"
+                    ],
+                    "imageUrlTemplate": "{{ @ }}",
+                    "imageTitleTemplate": "{{ @ }}",
+                    "imageWidth": "",
+                    "imageHeight": "",
+                    "linkUrlTemplate": "{{ @ }}",
+                    "linkTextTemplate": "{{ @ }}",
+                    "linkTitleTemplate": "{{ @ }}",
+                    "linkOpenInNewTab": true,
+                    "type": "string",
+                    "displayAs": "string",
+                    "visible": true,
+                    "order": 100000,
+                    "title": "statement_text",
+                    "allowSearch": false,
+                    "alignContent": "left",
+                    "allowHTML": false,
+                    "highlightLinks": false,
+                    "useMonospaceFont": false,
+                    "preserveWhitespace": false
+                  },
+                  {
+                    "fieldName": "dashboard_id",
+                    "booleanValues": [
+                      "false",
+                      "true"
+                    ],
+                    "imageUrlTemplate": "{{ @ }}",
+                    "imageTitleTemplate": "{{ @ }}",
+                    "imageWidth": "",
+                    "imageHeight": "",
+                    "linkUrlTemplate": "{{ dashboard_url }}",
+                    "linkTextTemplate": "{{ @ }}",
+                    "linkTitleTemplate": "{{ @ }}",
+                    "linkOpenInNewTab": true,
+                    "type": "string",
+                    "displayAs": "link",
+                    "visible": true,
+                    "order": 100001,
+                    "title": "dashboard_id",
+                    "allowSearch": false,
+                    "alignContent": "left",
+                    "allowHTML": false,
+                    "highlightLinks": false,
+                    "useMonospaceFont": false,
+                    "preserveWhitespace": false
+                  },
+                  {
+                    "fieldName": "avg_duration_sec",
+                    "numberFormat": "0.00",
+                    "booleanValues": [
+                      "false",
+                      "true"
+                    ],
+                    "imageUrlTemplate": "{{ @ }}",
+                    "imageTitleTemplate": "{{ @ }}",
+                    "imageWidth": "",
+                    "imageHeight": "",
+                    "linkUrlTemplate": "{{ @ }}",
+                    "linkTextTemplate": "{{ @ }}",
+                    "linkTitleTemplate": "{{ @ }}",
+                    "linkOpenInNewTab": true,
+                    "type": "float",
+                    "displayAs": "number",
+                    "visible": true,
+                    "order": 100003,
+                    "title": "avg_duration_sec",
+                    "allowSearch": false,
+                    "alignContent": "right",
+                    "allowHTML": false,
+                    "highlightLinks": false,
+                    "useMonospaceFont": false,
+                    "preserveWhitespace": false
+                  },
+                  {
+                    "fieldName": "min_read_gb",
+                    "numberFormat": "0.00",
+                    "booleanValues": [
+                      "false",
+                      "true"
+                    ],
+                    "imageUrlTemplate": "{{ @ }}",
+                    "imageTitleTemplate": "{{ @ }}",
+                    "imageWidth": "",
+                    "imageHeight": "",
+                    "linkUrlTemplate": "{{ @ }}",
+                    "linkTextTemplate": "{{ @ }}",
+                    "linkTitleTemplate": "{{ @ }}",
+                    "linkOpenInNewTab": true,
+                    "type": "float",
+                    "displayAs": "number",
+                    "visible": true,
+                    "order": 100004,
+                    "title": "min_read_gb",
+                    "allowSearch": false,
+                    "alignContent": "right",
+                    "allowHTML": false,
+                    "highlightLinks": false,
+                    "useMonospaceFont": false,
+                    "preserveWhitespace": false
+                  },
+                  {
+                    "fieldName": "max_read_gb",
+                    "numberFormat": "0.00",
+                    "booleanValues": [
+                      "false",
+                      "true"
+                    ],
+                    "imageUrlTemplate": "{{ @ }}",
+                    "imageTitleTemplate": "{{ @ }}",
+                    "imageWidth": "",
+                    "imageHeight": "",
+                    "linkUrlTemplate": "{{ @ }}",
+                    "linkTextTemplate": "{{ @ }}",
+                    "linkTitleTemplate": "{{ @ }}",
+                    "linkOpenInNewTab": true,
+                    "type": "float",
+                    "displayAs": "number",
+                    "visible": true,
+                    "order": 100005,
+                    "title": "max_read_gb",
+                    "allowSearch": false,
+                    "alignContent": "right",
+                    "allowHTML": false,
+                    "highlightLinks": false,
+                    "useMonospaceFont": false,
+                    "preserveWhitespace": false
+                  },
+                  {
+                    "fieldName": "avg_read_gb",
+                    "numberFormat": "0.00",
+                    "booleanValues": [
+                      "false",
+                      "true"
+                    ],
+                    "imageUrlTemplate": "{{ @ }}",
+                    "imageTitleTemplate": "{{ @ }}",
+                    "imageWidth": "",
+                    "imageHeight": "",
+                    "linkUrlTemplate": "{{ @ }}",
+                    "linkTextTemplate": "{{ @ }}",
+                    "linkTitleTemplate": "{{ @ }}",
+                    "linkOpenInNewTab": true,
+                    "type": "float",
+                    "displayAs": "number",
+                    "visible": true,
+                    "order": 100006,
+                    "title": "avg_read_gb",
+                    "allowSearch": false,
+                    "alignContent": "right",
+                    "allowHTML": false,
+                    "highlightLinks": false,
+                    "useMonospaceFont": false,
+                    "preserveWhitespace": false
+                  },
+                  {
+                    "fieldName": "query_count",
+                    "numberFormat": "0",
+                    "booleanValues": [
+                      "false",
+                      "true"
+                    ],
+                    "imageUrlTemplate": "{{ @ }}",
+                    "imageTitleTemplate": "{{ @ }}",
+                    "imageWidth": "",
+                    "imageHeight": "",
+                    "linkUrlTemplate": "{{ @ }}",
+                    "linkTextTemplate": "{{ @ }}",
+                    "linkTitleTemplate": "{{ @ }}",
+                    "linkOpenInNewTab": true,
+                    "type": "integer",
+                    "displayAs": "number",
+                    "visible": true,
+                    "order": 100007,
+                    "title": "query_count",
+                    "allowSearch": false,
+                    "alignContent": "right",
+                    "allowHTML": false,
+                    "highlightLinks": false,
+                    "useMonospaceFont": false,
+                    "preserveWhitespace": false
+                  },
+                  {
+                    "fieldName": "statements",
+                    "booleanValues": [
+                      "false",
+                      "true"
+                    ],
+                    "imageUrlTemplate": "{{ @ }}",
+                    "imageTitleTemplate": "{{ @ }}",
+                    "imageWidth": "",
+                    "imageHeight": "",
+                    "linkUrlTemplate": "{{ @ }}",
+                    "linkTextTemplate": "{{ @ }}",
+                    "linkTitleTemplate": "{{ @ }}",
+                    "linkOpenInNewTab": true,
+                    "type": "complex",
+                    "displayAs": "json",
+                    "visible": true,
+                    "order": 100008,
+                    "title": "statements",
+                    "allowSearch": false,
+                    "alignContent": "left",
+                    "allowHTML": false,
+                    "highlightLinks": false,
+                    "useMonospaceFont": false,
+                    "preserveWhitespace": false
+                  }
+                ]
+              },
+              "invisibleColumns": [
+                {
+                  "booleanValues": [
+                    "false",
+                    "true"
+                  ],
+                  "imageUrlTemplate": "{{ @ }}",
+                  "imageTitleTemplate": "{{ @ }}",
+                  "imageWidth": "",
+                  "imageHeight": "",
+                  "linkUrlTemplate": "{{ @ }}",
+                  "linkTextTemplate": "{{ @ }}",
+                  "linkTitleTemplate": "{{ @ }}",
+                  "linkOpenInNewTab": true,
+                  "name": "dashboard_url",
+                  "type": "string",
+                  "displayAs": "string",
+                  "order": 100002,
+                  "title": "dashboard_url",
+                  "allowSearch": false,
+                  "alignContent": "left",
+                  "allowHTML": false,
+                  "highlightLinks": false,
+                  "useMonospaceFont": false,
+                  "preserveWhitespace": false
+                }
+              ],
+              "allowHTMLByDefault": false,
+              "itemsPerPage": 25,
+              "paginationSize": "default",
+              "condensed": true,
+              "withRowNumber": false,
+              "frame": {
+                "showTitle": true,
+                "showDescription": true,
+                "title": "Queries by dashboard: query detail",
+                "description": "Queries with the same statement text from the same dashboard with aggregated metrics.\nWe cap the statements at 20 but there may be more as shown by the query_count column"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 14,
+            "width": 6,
+            "height": 6
+          }
+        },
+        {
+          "widget": {
+            "name": "d1720500",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "273f7b81",
+                  "fields": [
+                    {
+                      "name": "sum(query_count)",
+                      "expression": "SUM(`query_count`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "counter",
+              "encodings": {
+                "value": {
+                  "fieldName": "sum(query_count)"
+                }
+              },
+              "frame": {
+                "title": "Total Queries",
+                "showTitle": true,
+                "showDescription": true,
+                "description": "Based on the filters to the right"
+              }
+            }
+          },
+          "position": {
+            "x": 2,
+            "y": 0,
+            "width": 1,
+            "height": 5
+          }
+        },
+        {
+          "widget": {
+            "name": "090f40af",
+            "multilineTextboxSpec": {
+              "lines": [
+                "## Query analysis\n",
+                "\n",
+                "Looking for problematic dashboards for longer-running, repeated queries that read a lot of data.\n",
+                "\n",
+                "With the default filters, we identify any dashboards that contain queries consuming more than 1 GB of data and running for over 10 minutes. Doing this repeatedly is something that should be optimised.\n",
+                "\n",
+                "To drill down to statement-level detail right click on a bar and select:\n",
+                "\n",
+                "```py\n",
+                "Drill to > Statement drill down\n",
+                "```"
+              ]
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 0,
+            "width": 2,
+            "height": 5
+          }
+        }
+      ],
+      "pageType": "PAGE_TYPE_CANVAS"
+    },
+    {
+      "name": "f8e8bdb1",
+      "displayName": "Query cache miss",
+      "layout": [
+        {
+          "widget": {
+            "name": "35eb70a2",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "273f7b81",
+                  "fields": [
+                    {
+                      "name": "statement_text",
+                      "expression": "`statement_text`"
+                    },
+                    {
+                      "name": "dashboard_id",
+                      "expression": "`dashboard_id`"
+                    },
+                    {
+                      "name": "query_count",
+                      "expression": "`query_count`"
+                    },
+                    {
+                      "name": "avg_duration_sec",
+                      "expression": "`avg_duration_sec`"
+                    },
+                    {
+                      "name": "avg_read_gb",
+                      "expression": "`avg_read_gb`"
+                    },
+                    {
+                      "name": "max_read_gb",
+                      "expression": "`max_read_gb`"
+                    },
+                    {
+                      "name": "min_read_gb",
+                      "expression": "`min_read_gb`"
+                    },
+                    {
+                      "name": "statements",
+                      "expression": "`statements`"
+                    },
+                    {
+                      "name": "dashboard_url",
+                      "expression": "`dashboard_url`"
+                    }
+                  ],
+                  "parameterValues": [
+                    {
+                      "keyword": "produced_rows_max",
+                      "selection": {
+                        "values": {
+                          "dataType": "STRING",
+                          "values": [
+                            {
+                              "value": "100000"
+                            }
+                          ]
+                        }
+                      }
+                    },
+                    {
+                      "keyword": "min_read_gb",
+                      "selection": {
+                        "values": {
+                          "dataType": "STRING",
+                          "values": [
+                            {
+                              "value": "1"
+                            }
+                          ]
+                        }
+                      }
+                    },
+                    {
+                      "keyword": "from_result_cache",
+                      "selection": {
+                        "values": {
+                          "dataType": "STRING",
+                          "values": [
+                            {
+                              "value": "false"
+                            }
+                          ]
+                        }
+                      }
+                    },
+                    {
+                      "keyword": "produced_rows_min",
+                      "selection": {
+                        "values": {
+                          "dataType": "STRING",
+                          "values": [
+                            {
+                              "value": "0"
+                            }
+                          ]
+                        }
+                      }
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "version": 1,
+              "widgetType": "table",
+              "encodings": {
+                "columns": [
+                  {
+                    "fieldName": "statement_text",
+                    "booleanValues": [
+                      "false",
+                      "true"
+                    ],
+                    "imageUrlTemplate": "{{ @ }}",
+                    "imageTitleTemplate": "{{ @ }}",
+                    "imageWidth": "",
+                    "imageHeight": "",
+                    "linkUrlTemplate": "{{ @ }}",
+                    "linkTextTemplate": "{{ @ }}",
+                    "linkTitleTemplate": "{{ @ }}",
+                    "linkOpenInNewTab": true,
+                    "type": "string",
+                    "displayAs": "string",
+                    "visible": true,
+                    "order": 0,
+                    "title": "statement_text",
+                    "allowSearch": false,
+                    "alignContent": "left",
+                    "allowHTML": false,
+                    "highlightLinks": false,
+                    "useMonospaceFont": false,
+                    "preserveWhitespace": false
+                  },
+                  {
+                    "fieldName": "dashboard_id",
+                    "booleanValues": [
+                      "false",
+                      "true"
+                    ],
+                    "imageUrlTemplate": "{{ @ }}",
+                    "imageTitleTemplate": "{{ @ }}",
+                    "imageWidth": "",
+                    "imageHeight": "",
+                    "linkUrlTemplate": "{{ dashboard_url }}",
+                    "linkTextTemplate": "{{ @ }}",
+                    "linkTitleTemplate": "{{ @ }}",
+                    "linkOpenInNewTab": true,
+                    "type": "string",
+                    "displayAs": "link",
+                    "visible": true,
+                    "order": 1,
+                    "title": "dashboard_id",
+                    "allowSearch": false,
+                    "alignContent": "left",
+                    "allowHTML": false,
+                    "highlightLinks": false,
+                    "useMonospaceFont": false,
+                    "preserveWhitespace": false
+                  },
+                  {
+                    "fieldName": "query_count",
+                    "numberFormat": "0",
+                    "booleanValues": [
+                      "false",
+                      "true"
+                    ],
+                    "imageUrlTemplate": "{{ @ }}",
+                    "imageTitleTemplate": "{{ @ }}",
+                    "imageWidth": "",
+                    "imageHeight": "",
+                    "linkUrlTemplate": "{{ @ }}",
+                    "linkTextTemplate": "{{ @ }}",
+                    "linkTitleTemplate": "{{ @ }}",
+                    "linkOpenInNewTab": true,
+                    "type": "integer",
+                    "displayAs": "number",
+                    "visible": true,
+                    "order": 3,
+                    "title": "query_count",
+                    "allowSearch": false,
+                    "alignContent": "right",
+                    "allowHTML": false,
+                    "highlightLinks": false,
+                    "useMonospaceFont": false,
+                    "preserveWhitespace": false
+                  },
+                  {
+                    "fieldName": "avg_duration_sec",
+                    "numberFormat": "0.00",
+                    "booleanValues": [
+                      "false",
+                      "true"
+                    ],
+                    "imageUrlTemplate": "{{ @ }}",
+                    "imageTitleTemplate": "{{ @ }}",
+                    "imageWidth": "",
+                    "imageHeight": "",
+                    "linkUrlTemplate": "{{ @ }}",
+                    "linkTextTemplate": "{{ @ }}",
+                    "linkTitleTemplate": "{{ @ }}",
+                    "linkOpenInNewTab": true,
+                    "type": "float",
+                    "displayAs": "number",
+                    "visible": true,
+                    "order": 4,
+                    "title": "avg_duration_sec",
+                    "allowSearch": false,
+                    "alignContent": "right",
+                    "allowHTML": false,
+                    "highlightLinks": false,
+                    "useMonospaceFont": false,
+                    "preserveWhitespace": false
+                  },
+                  {
+                    "fieldName": "avg_read_gb",
+                    "numberFormat": "0.00",
+                    "booleanValues": [
+                      "false",
+                      "true"
+                    ],
+                    "imageUrlTemplate": "{{ @ }}",
+                    "imageTitleTemplate": "{{ @ }}",
+                    "imageWidth": "",
+                    "imageHeight": "",
+                    "linkUrlTemplate": "{{ @ }}",
+                    "linkTextTemplate": "{{ @ }}",
+                    "linkTitleTemplate": "{{ @ }}",
+                    "linkOpenInNewTab": true,
+                    "type": "float",
+                    "displayAs": "number",
+                    "visible": true,
+                    "order": 5,
+                    "title": "avg_read_gb",
+                    "allowSearch": false,
+                    "alignContent": "right",
+                    "allowHTML": false,
+                    "highlightLinks": false,
+                    "useMonospaceFont": false,
+                    "preserveWhitespace": false
+                  },
+                  {
+                    "fieldName": "max_read_gb",
+                    "numberFormat": "0.00",
+                    "booleanValues": [
+                      "false",
+                      "true"
+                    ],
+                    "imageUrlTemplate": "{{ @ }}",
+                    "imageTitleTemplate": "{{ @ }}",
+                    "imageWidth": "",
+                    "imageHeight": "",
+                    "linkUrlTemplate": "{{ @ }}",
+                    "linkTextTemplate": "{{ @ }}",
+                    "linkTitleTemplate": "{{ @ }}",
+                    "linkOpenInNewTab": true,
+                    "type": "float",
+                    "displayAs": "number",
+                    "visible": true,
+                    "order": 6,
+                    "title": "max_read_gb",
+                    "allowSearch": false,
+                    "alignContent": "right",
+                    "allowHTML": false,
+                    "highlightLinks": false,
+                    "useMonospaceFont": false,
+                    "preserveWhitespace": false
+                  },
+                  {
+                    "fieldName": "min_read_gb",
+                    "numberFormat": "0.00",
+                    "booleanValues": [
+                      "false",
+                      "true"
+                    ],
+                    "imageUrlTemplate": "{{ @ }}",
+                    "imageTitleTemplate": "{{ @ }}",
+                    "imageWidth": "",
+                    "imageHeight": "",
+                    "linkUrlTemplate": "{{ @ }}",
+                    "linkTextTemplate": "{{ @ }}",
+                    "linkTitleTemplate": "{{ @ }}",
+                    "linkOpenInNewTab": true,
+                    "type": "float",
+                    "displayAs": "number",
+                    "visible": true,
+                    "order": 7,
+                    "title": "min_read_gb",
+                    "allowSearch": false,
+                    "alignContent": "right",
+                    "allowHTML": false,
+                    "highlightLinks": false,
+                    "useMonospaceFont": false,
+                    "preserveWhitespace": false
+                  },
+                  {
+                    "fieldName": "statements",
+                    "booleanValues": [
+                      "false",
+                      "true"
+                    ],
+                    "imageUrlTemplate": "{{ @ }}",
+                    "imageTitleTemplate": "{{ @ }}",
+                    "imageWidth": "",
+                    "imageHeight": "",
+                    "linkUrlTemplate": "{{ @ }}",
+                    "linkTextTemplate": "{{ @ }}",
+                    "linkTitleTemplate": "{{ @ }}",
+                    "linkOpenInNewTab": true,
+                    "type": "complex",
+                    "displayAs": "json",
+                    "visible": true,
+                    "order": 8,
+                    "title": "statements",
+                    "allowSearch": false,
+                    "alignContent": "left",
+                    "allowHTML": false,
+                    "highlightLinks": false,
+                    "useMonospaceFont": false,
+                    "preserveWhitespace": false
+                  }
+                ]
+              },
+              "invisibleColumns": [
+                {
+                  "booleanValues": [
+                    "false",
+                    "true"
+                  ],
+                  "imageUrlTemplate": "{{ @ }}",
+                  "imageTitleTemplate": "{{ @ }}",
+                  "imageWidth": "",
+                  "imageHeight": "",
+                  "linkUrlTemplate": "{{ @ }}",
+                  "linkTextTemplate": "{{ @ }}",
+                  "linkTitleTemplate": "{{ @ }}",
+                  "linkOpenInNewTab": true,
+                  "name": "dashboard_url",
+                  "type": "string",
+                  "displayAs": "string",
+                  "order": 2,
+                  "title": "dashboard_url",
+                  "allowSearch": false,
+                  "alignContent": "left",
+                  "allowHTML": false,
+                  "highlightLinks": false,
+                  "useMonospaceFont": false,
+                  "preserveWhitespace": false
+                }
+              ],
+              "allowHTMLByDefault": false,
+              "itemsPerPage": 25,
+              "paginationSize": "default",
+              "condensed": true,
+              "withRowNumber": false,
+              "frame": {
+                "showTitle": true,
+                "showDescription": true,
+                "title": "Not caching but should: query detail",
+                "description": "Query list for the above"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 13,
+            "width": 6,
+            "height": 6
+          }
+        },
+        {
+          "widget": {
+            "name": "3bb89fc5",
+            "queries": [
+              {
+                "name": "parameter_dashboards/01f0b5dbfe57149cab30e34b2a55e4c6/datasets/01f0b5dd70dc1f2aaba819c8fdbbc8be_time_range",
+                "query": {
+                  "datasetName": "273f7b81",
+                  "parameters": [
+                    {
+                      "name": "time_range",
+                      "keyword": "time_range"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "filter-date-range-picker",
+              "encodings": {
+                "fields": [
+                  {
+                    "parameterName": "time_range",
+                    "queryName": "parameter_dashboards/01f0b5dbfe57149cab30e34b2a55e4c6/datasets/01f0b5dd70dc1f2aaba819c8fdbbc8be_time_range"
+                  }
+                ]
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Time range",
+                "showDescription": false
+              }
+            }
+          },
+          "position": {
+            "x": 3,
+            "y": 0,
+            "width": 3,
+            "height": 3
+          }
+        },
+        {
+          "widget": {
+            "name": "729b376d",
+            "queries": [
+              {
+                "name": "parameter_dashboards/01f0b5dbfe57149cab30e34b2a55e4c6/datasets/01f0b5dd70dc1f2aaba819c8fdbbc8be_min_total_duration_sec",
+                "query": {
+                  "datasetName": "273f7b81",
+                  "parameters": [
+                    {
+                      "name": "min_total_duration_sec",
+                      "keyword": "min_total_duration_sec"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "filter-single-select",
+              "encodings": {
+                "fields": [
+                  {
+                    "parameterName": "min_total_duration_sec",
+                    "queryName": "parameter_dashboards/01f0b5dbfe57149cab30e34b2a55e4c6/datasets/01f0b5dd70dc1f2aaba819c8fdbbc8be_min_total_duration_sec"
+                  }
+                ]
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Min duration (secs)"
+              }
+            }
+          },
+          "position": {
+            "x": 3,
+            "y": 3,
+            "width": 3,
+            "height": 2
+          }
+        },
+        {
+          "widget": {
+            "name": "3b65ed65",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "273f7b81",
+                  "fields": [
+                    {
+                      "name": "sum(query_count)",
+                      "expression": "SUM(`query_count`)"
+                    },
+                    {
+                      "name": "dashboard_id",
+                      "expression": "`dashboard_id`"
+                    }
+                  ],
+                  "parameterValues": [
+                    {
+                      "keyword": "produced_rows_max",
+                      "selection": {
+                        "values": {
+                          "dataType": "STRING",
+                          "values": [
+                            {
+                              "value": "100000"
+                            }
+                          ]
+                        }
+                      }
+                    },
+                    {
+                      "keyword": "min_read_gb",
+                      "selection": {
+                        "values": {
+                          "dataType": "STRING",
+                          "values": [
+                            {
+                              "value": "1"
+                            }
+                          ]
+                        }
+                      }
+                    },
+                    {
+                      "keyword": "from_result_cache",
+                      "selection": {
+                        "values": {
+                          "dataType": "STRING",
+                          "values": [
+                            {
+                              "value": "false"
+                            }
+                          ]
+                        }
+                      }
+                    },
+                    {
+                      "keyword": "produced_rows_min",
+                      "selection": {
+                        "values": {
+                          "dataType": "STRING",
+                          "values": [
+                            {
+                              "value": "0"
+                            }
+                          ]
+                        }
+                      }
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 3,
+              "widgetType": "bar",
+              "encodings": {
+                "x": {
+                  "fieldName": "sum(query_count)",
+                  "scale": {
+                    "type": "quantitative"
+                  },
+                  "axis": {
+                    "title": "uncached query count"
+                  },
+                  "displayName": "query_count"
+                },
+                "y": {
+                  "fieldName": "dashboard_id",
+                  "scale": {
+                    "type": "categorical",
+                    "sort": {
+                      "by": "x-reversed"
+                    }
+                  },
+                  "axis": {
+                    "title": "dashboard id"
+                  }
+                }
+              },
+              "frame": {
+                "showDescription": true,
+                "description": "Looking for Dashboards with queries that have less than 100,000 produced rows and still dont use the query cache",
+                "title": "Not caching but should",
+                "showTitle": true
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 5,
+            "width": 6,
+            "height": 8
+          }
+        },
+        {
+          "widget": {
+            "name": "a1533815",
+            "multilineTextboxSpec": {
+              "lines": [
+                "## Query Cache misses\n",
+                "\n",
+                "We want to identify all dashboards that run queries producing fewer than 100,000 rows but also fail to utilise the query cache. Refer to the [Databricks docs](https://docs.databricks.com/aws/en/sql/user/queries/query-caching) for details on DBSQL caching. With the default filter we only look at queries that run for more than 10 mins but it can be useful to look at shorter queries if there is a high repeat count.\n",
+                "\n",
+                "This is often due to the fact that the underlying dataset is changing, necessitating the need to rerun the query. A classic example of this would be direct queries on the [system tables](https://docs.databricks.com/aws/en/admin/system-tables/). These might be candidates for materialisation.\n",
+                "\n",
+                "To drill down to statement-level detail right click on a bar and select:\n",
+                "\n",
+                "```py\n",
+                "Drill to > Statement drill down\n",
+                "```"
+              ]
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 0,
+            "width": 3,
+            "height": 5
+          }
+        }
+      ],
+      "pageType": "PAGE_TYPE_CANVAS"
+    },
+    {
+      "name": "e32a1575",
+      "displayName": "Statement drill down",
+      "layout": [
+        {
+          "widget": {
+            "name": "4d573522",
+            "queries": [
+              {
+                "name": "dashboards/01f0b5dbfe57149cab30e34b2a55e4c6/datasets/01f0b5dd70dc1f2aaba819c8fdbbc8be_dashboard_id",
+                "query": {
+                  "datasetName": "273f7b81",
+                  "fields": [
+                    {
+                      "name": "dashboard_id",
+                      "expression": "`dashboard_id`"
+                    },
+                    {
+                      "name": "dashboard_id_associativity",
+                      "expression": "COUNT_IF(`associative_filter_predicate_group`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              },
+              {
+                "name": "parameter_dashboards/01f0b5dbfe57149cab30e34b2a55e4c6/datasets/01f0b5dc33791b289a5c8e6c39d5af43_dashboard_id",
+                "query": {
+                  "datasetName": "91008fdb",
+                  "parameters": [
+                    {
+                      "name": "dashboard_id",
+                      "keyword": "dashboard_id"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "filter-single-select",
+              "encodings": {
+                "fields": [
+                  {
+                    "parameterName": "dashboard_id",
+                    "queryName": "parameter_dashboards/01f0b5dbfe57149cab30e34b2a55e4c6/datasets/01f0b5dc33791b289a5c8e6c39d5af43_dashboard_id"
+                  },
+                  {
+                    "fieldName": "dashboard_id",
+                    "queryName": "dashboards/01f0b5dbfe57149cab30e34b2a55e4c6/datasets/01f0b5dd70dc1f2aaba819c8fdbbc8be_dashboard_id"
+                  }
+                ]
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Dashboard ID"
+              },
+              "selection": {
+                "defaultSelection": {
+                  "values": {
+                    "dataType": "STRING",
+                    "values": [
+                      {
+                        "value": " "
+                      }
+                    ]
+                  }
+                }
+              }
+            }
+          },
+          "position": {
+            "x": 4,
+            "y": 0,
+            "width": 2,
+            "height": 1
+          }
+        },
+        {
+          "widget": {
+            "name": "1fa5b2fa",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "91008fdb",
+                  "fields": [
+                    {
+                      "name": "dashboard_id",
+                      "expression": "`dashboard_id`"
+                    },
+                    {
+                      "name": "statement_id",
+                      "expression": "`statement_id`"
+                    },
+                    {
+                      "name": "statement_text",
+                      "expression": "`statement_text`"
+                    },
+                    {
+                      "name": "warehouse",
+                      "expression": "`warehouse`"
+                    },
+                    {
+                      "name": "workspace_name",
+                      "expression": "`workspace_name`"
+                    },
+                    {
+                      "name": "workspace_id",
+                      "expression": "`workspace_id`"
+                    },
+                    {
+                      "name": "executed_by",
+                      "expression": "`executed_by`"
+                    },
+                    {
+                      "name": "session_id",
+                      "expression": "`session_id`"
+                    },
+                    {
+                      "name": "execution_status",
+                      "expression": "`execution_status`"
+                    },
+                    {
+                      "name": "executed_by_user_id",
+                      "expression": "`executed_by_user_id`"
+                    },
+                    {
+                      "name": "statement_type",
+                      "expression": "`statement_type`"
+                    },
+                    {
+                      "name": "error_message",
+                      "expression": "`error_message`"
+                    },
+                    {
+                      "name": "client_application",
+                      "expression": "`client_application`"
+                    },
+                    {
+                      "name": "client_driver",
+                      "expression": "`client_driver`"
+                    },
+                    {
+                      "name": "total_duration_ms",
+                      "expression": "`total_duration_ms`"
+                    },
+                    {
+                      "name": "waiting_for_compute_duration_ms",
+                      "expression": "`waiting_for_compute_duration_ms`"
+                    },
+                    {
+                      "name": "waiting_at_capacity_duration_ms",
+                      "expression": "`waiting_at_capacity_duration_ms`"
+                    },
+                    {
+                      "name": "execution_duration_ms",
+                      "expression": "`execution_duration_ms`"
+                    },
+                    {
+                      "name": "compilation_duration_ms",
+                      "expression": "`compilation_duration_ms`"
+                    },
+                    {
+                      "name": "total_task_duration_ms",
+                      "expression": "`total_task_duration_ms`"
+                    },
+                    {
+                      "name": "result_fetch_duration_ms",
+                      "expression": "`result_fetch_duration_ms`"
+                    },
+                    {
+                      "name": "start_time",
+                      "expression": "`start_time`"
+                    },
+                    {
+                      "name": "end_time",
+                      "expression": "`end_time`"
+                    },
+                    {
+                      "name": "update_time",
+                      "expression": "`update_time`"
+                    },
+                    {
+                      "name": "read_partitions",
+                      "expression": "`read_partitions`"
+                    },
+                    {
+                      "name": "pruned_files",
+                      "expression": "`pruned_files`"
+                    },
+                    {
+                      "name": "read_files",
+                      "expression": "`read_files`"
+                    },
+                    {
+                      "name": "read_rows",
+                      "expression": "`read_rows`"
+                    },
+                    {
+                      "name": "produced_rows",
+                      "expression": "`produced_rows`"
+                    },
+                    {
+                      "name": "read_bytes",
+                      "expression": "`read_bytes`"
+                    },
+                    {
+                      "name": "read_io_cache_percent",
+                      "expression": "`read_io_cache_percent`"
+                    },
+                    {
+                      "name": "from_result_cache",
+                      "expression": "`from_result_cache`"
+                    },
+                    {
+                      "name": "spilled_local_bytes",
+                      "expression": "`spilled_local_bytes`"
+                    },
+                    {
+                      "name": "written_bytes",
+                      "expression": "`written_bytes`"
+                    },
+                    {
+                      "name": "shuffle_read_bytes",
+                      "expression": "`shuffle_read_bytes`"
+                    },
+                    {
+                      "name": "query_source",
+                      "expression": "`query_source`"
+                    },
+                    {
+                      "name": "executed_as_user_id",
+                      "expression": "`executed_as_user_id`"
+                    },
+                    {
+                      "name": "executed_as",
+                      "expression": "`executed_as`"
+                    },
+                    {
+                      "name": "written_rows",
+                      "expression": "`written_rows`"
+                    },
+                    {
+                      "name": "written_files",
+                      "expression": "`written_files`"
+                    },
+                    {
+                      "name": "cache_origin_statement_id",
+                      "expression": "`cache_origin_statement_id`"
+                    },
+                    {
+                      "name": "query_parameters",
+                      "expression": "`query_parameters`"
+                    },
+                    {
+                      "name": "query_tags",
+                      "expression": "`query_tags`"
+                    },
+                    {
+                      "name": "dashboard_url",
+                      "expression": "`dashboard_url`"
+                    },
+                    {
+                      "name": "statement_url",
+                      "expression": "`statement_url`"
+                    },
+                    {
+                      "name": "warehouse_url",
+                      "expression": "`warehouse_url`"
+                    }
+                  ],
+                  "parameterValues": [
+                    {
+                      "keyword": "min_total_duration_sec",
+                      "selection": {
+                        "values": {
+                          "dataType": "STRING",
+                          "values": [
+                            {
+                              "value": "0"
+                            }
+                          ]
+                        }
+                      }
+                    }
+                  ],
+                  "filters": [
+                    {
+                      "expression": "`dashboard_id` IN (`dashboard_id`) OR TRUE"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "version": 1,
+              "widgetType": "table",
+              "encodings": {
+                "columns": [
+                  {
+                    "fieldName": "dashboard_id",
+                    "booleanValues": [
+                      "false",
+                      "true"
+                    ],
+                    "imageUrlTemplate": "{{ @ }}",
+                    "imageTitleTemplate": "{{ @ }}",
+                    "imageWidth": "",
+                    "imageHeight": "",
+                    "linkUrlTemplate": "{{ dashboard_url }}",
+                    "linkTextTemplate": "{{ @ }}",
+                    "linkTitleTemplate": "{{ @ }}",
+                    "linkOpenInNewTab": true,
+                    "type": "string",
+                    "displayAs": "link",
+                    "visible": true,
+                    "order": 0,
+                    "title": "dashboard_id",
+                    "allowSearch": false,
+                    "alignContent": "left",
+                    "allowHTML": false,
+                    "highlightLinks": false,
+                    "useMonospaceFont": false,
+                    "preserveWhitespace": false
+                  },
+                  {
+                    "fieldName": "statement_id",
+                    "booleanValues": [
+                      "false",
+                      "true"
+                    ],
+                    "imageUrlTemplate": "{{ @ }}",
+                    "imageTitleTemplate": "{{ @ }}",
+                    "imageWidth": "",
+                    "imageHeight": "",
+                    "linkUrlTemplate": "{{ statement_url }}",
+                    "linkTextTemplate": "{{ @ }}",
+                    "linkTitleTemplate": "{{ @ }}",
+                    "linkOpenInNewTab": true,
+                    "type": "string",
+                    "displayAs": "link",
+                    "visible": true,
+                    "order": 1,
+                    "title": "statement_id",
+                    "allowSearch": false,
+                    "alignContent": "left",
+                    "allowHTML": false,
+                    "highlightLinks": false,
+                    "useMonospaceFont": false,
+                    "preserveWhitespace": false
+                  },
+                  {
+                    "fieldName": "statement_text",
+                    "booleanValues": [
+                      "false",
+                      "true"
+                    ],
+                    "imageUrlTemplate": "{{ @ }}",
+                    "imageTitleTemplate": "{{ @ }}",
+                    "imageWidth": "",
+                    "imageHeight": "",
+                    "linkUrlTemplate": "{{ @ }}",
+                    "linkTextTemplate": "{{ @ }}",
+                    "linkTitleTemplate": "{{ @ }}",
+                    "linkOpenInNewTab": true,
+                    "type": "string",
+                    "displayAs": "string",
+                    "visible": true,
+                    "order": 2,
+                    "title": "statement_text",
+                    "allowSearch": false,
+                    "alignContent": "left",
+                    "allowHTML": false,
+                    "highlightLinks": false,
+                    "useMonospaceFont": false,
+                    "preserveWhitespace": false
+                  },
+                  {
+                    "fieldName": "warehouse",
+                    "booleanValues": [
+                      "false",
+                      "true"
+                    ],
+                    "imageUrlTemplate": "{{ @ }}",
+                    "imageTitleTemplate": "{{ @ }}",
+                    "imageWidth": "",
+                    "imageHeight": "",
+                    "linkUrlTemplate": "{{ warehouse_url }}",
+                    "linkTextTemplate": "{{ @ }}",
+                    "linkTitleTemplate": "{{ @ }}",
+                    "linkOpenInNewTab": true,
+                    "type": "string",
+                    "displayAs": "link",
+                    "visible": true,
+                    "order": 3,
+                    "title": "warehouse",
+                    "allowSearch": false,
+                    "alignContent": "left",
+                    "allowHTML": false,
+                    "highlightLinks": false,
+                    "useMonospaceFont": false,
+                    "preserveWhitespace": false
+                  },
+                  {
+                    "fieldName": "workspace_name",
+                    "booleanValues": [
+                      "false",
+                      "true"
+                    ],
+                    "imageUrlTemplate": "{{ @ }}",
+                    "imageTitleTemplate": "{{ @ }}",
+                    "imageWidth": "",
+                    "imageHeight": "",
+                    "linkUrlTemplate": "{{ @ }}",
+                    "linkTextTemplate": "{{ @ }}",
+                    "linkTitleTemplate": "{{ @ }}",
+                    "linkOpenInNewTab": true,
+                    "type": "string",
+                    "displayAs": "string",
+                    "visible": true,
+                    "order": 4,
+                    "title": "workspace_name",
+                    "allowSearch": false,
+                    "alignContent": "left",
+                    "allowHTML": false,
+                    "highlightLinks": false,
+                    "useMonospaceFont": false,
+                    "preserveWhitespace": false
+                  },
+                  {
+                    "fieldName": "workspace_id",
+                    "booleanValues": [
+                      "false",
+                      "true"
+                    ],
+                    "imageUrlTemplate": "{{ @ }}",
+                    "imageTitleTemplate": "{{ @ }}",
+                    "imageWidth": "",
+                    "imageHeight": "",
+                    "linkUrlTemplate": "{{ @ }}",
+                    "linkTextTemplate": "{{ @ }}",
+                    "linkTitleTemplate": "{{ @ }}",
+                    "linkOpenInNewTab": true,
+                    "type": "string",
+                    "displayAs": "string",
+                    "visible": true,
+                    "order": 7,
+                    "title": "workspace_id",
+                    "allowSearch": false,
+                    "alignContent": "left",
+                    "allowHTML": false,
+                    "highlightLinks": false,
+                    "useMonospaceFont": false,
+                    "preserveWhitespace": false
+                  },
+                  {
+                    "fieldName": "executed_by",
+                    "booleanValues": [
+                      "false",
+                      "true"
+                    ],
+                    "imageUrlTemplate": "{{ @ }}",
+                    "imageTitleTemplate": "{{ @ }}",
+                    "imageWidth": "",
+                    "imageHeight": "",
+                    "linkUrlTemplate": "{{ @ }}",
+                    "linkTextTemplate": "{{ @ }}",
+                    "linkTitleTemplate": "{{ @ }}",
+                    "linkOpenInNewTab": true,
+                    "type": "string",
+                    "displayAs": "string",
+                    "visible": true,
+                    "order": 8,
+                    "title": "executed_by",
+                    "allowSearch": false,
+                    "alignContent": "left",
+                    "allowHTML": false,
+                    "highlightLinks": false,
+                    "useMonospaceFont": false,
+                    "preserveWhitespace": false
+                  },
+                  {
+                    "fieldName": "session_id",
+                    "booleanValues": [
+                      "false",
+                      "true"
+                    ],
+                    "imageUrlTemplate": "{{ @ }}",
+                    "imageTitleTemplate": "{{ @ }}",
+                    "imageWidth": "",
+                    "imageHeight": "",
+                    "linkUrlTemplate": "{{ @ }}",
+                    "linkTextTemplate": "{{ @ }}",
+                    "linkTitleTemplate": "{{ @ }}",
+                    "linkOpenInNewTab": true,
+                    "type": "string",
+                    "displayAs": "string",
+                    "visible": true,
+                    "order": 9,
+                    "title": "session_id",
+                    "allowSearch": false,
+                    "alignContent": "left",
+                    "allowHTML": false,
+                    "highlightLinks": false,
+                    "useMonospaceFont": false,
+                    "preserveWhitespace": false
+                  },
+                  {
+                    "fieldName": "execution_status",
+                    "booleanValues": [
+                      "false",
+                      "true"
+                    ],
+                    "imageUrlTemplate": "{{ @ }}",
+                    "imageTitleTemplate": "{{ @ }}",
+                    "imageWidth": "",
+                    "imageHeight": "",
+                    "linkUrlTemplate": "{{ @ }}",
+                    "linkTextTemplate": "{{ @ }}",
+                    "linkTitleTemplate": "{{ @ }}",
+                    "linkOpenInNewTab": true,
+                    "type": "string",
+                    "displayAs": "string",
+                    "visible": true,
+                    "order": 10,
+                    "title": "execution_status",
+                    "allowSearch": false,
+                    "alignContent": "left",
+                    "allowHTML": false,
+                    "highlightLinks": false,
+                    "useMonospaceFont": false,
+                    "preserveWhitespace": false
+                  },
+                  {
+                    "fieldName": "executed_by_user_id",
+                    "booleanValues": [
+                      "false",
+                      "true"
+                    ],
+                    "imageUrlTemplate": "{{ @ }}",
+                    "imageTitleTemplate": "{{ @ }}",
+                    "imageWidth": "",
+                    "imageHeight": "",
+                    "linkUrlTemplate": "{{ @ }}",
+                    "linkTextTemplate": "{{ @ }}",
+                    "linkTitleTemplate": "{{ @ }}",
+                    "linkOpenInNewTab": true,
+                    "type": "string",
+                    "displayAs": "string",
+                    "visible": true,
+                    "order": 12,
+                    "title": "executed_by_user_id",
+                    "allowSearch": false,
+                    "alignContent": "left",
+                    "allowHTML": false,
+                    "highlightLinks": false,
+                    "useMonospaceFont": false,
+                    "preserveWhitespace": false
+                  },
+                  {
+                    "fieldName": "statement_type",
+                    "booleanValues": [
+                      "false",
+                      "true"
+                    ],
+                    "imageUrlTemplate": "{{ @ }}",
+                    "imageTitleTemplate": "{{ @ }}",
+                    "imageWidth": "",
+                    "imageHeight": "",
+                    "linkUrlTemplate": "{{ @ }}",
+                    "linkTextTemplate": "{{ @ }}",
+                    "linkTitleTemplate": "{{ @ }}",
+                    "linkOpenInNewTab": true,
+                    "type": "string",
+                    "displayAs": "string",
+                    "visible": true,
+                    "order": 13,
+                    "title": "statement_type",
+                    "allowSearch": false,
+                    "alignContent": "left",
+                    "allowHTML": false,
+                    "highlightLinks": false,
+                    "useMonospaceFont": false,
+                    "preserveWhitespace": false
+                  },
+                  {
+                    "fieldName": "error_message",
+                    "booleanValues": [
+                      "false",
+                      "true"
+                    ],
+                    "imageUrlTemplate": "{{ @ }}",
+                    "imageTitleTemplate": "{{ @ }}",
+                    "imageWidth": "",
+                    "imageHeight": "",
+                    "linkUrlTemplate": "{{ @ }}",
+                    "linkTextTemplate": "{{ @ }}",
+                    "linkTitleTemplate": "{{ @ }}",
+                    "linkOpenInNewTab": true,
+                    "type": "string",
+                    "displayAs": "string",
+                    "visible": true,
+                    "order": 14,
+                    "title": "error_message",
+                    "allowSearch": false,
+                    "alignContent": "left",
+                    "allowHTML": false,
+                    "highlightLinks": false,
+                    "useMonospaceFont": false,
+                    "preserveWhitespace": false
+                  },
+                  {
+                    "fieldName": "client_application",
+                    "booleanValues": [
+                      "false",
+                      "true"
+                    ],
+                    "imageUrlTemplate": "{{ @ }}",
+                    "imageTitleTemplate": "{{ @ }}",
+                    "imageWidth": "",
+                    "imageHeight": "",
+                    "linkUrlTemplate": "{{ @ }}",
+                    "linkTextTemplate": "{{ @ }}",
+                    "linkTitleTemplate": "{{ @ }}",
+                    "linkOpenInNewTab": true,
+                    "type": "string",
+                    "displayAs": "string",
+                    "visible": true,
+                    "order": 15,
+                    "title": "client_application",
+                    "allowSearch": false,
+                    "alignContent": "left",
+                    "allowHTML": false,
+                    "highlightLinks": false,
+                    "useMonospaceFont": false,
+                    "preserveWhitespace": false
+                  },
+                  {
+                    "fieldName": "client_driver",
+                    "booleanValues": [
+                      "false",
+                      "true"
+                    ],
+                    "imageUrlTemplate": "{{ @ }}",
+                    "imageTitleTemplate": "{{ @ }}",
+                    "imageWidth": "",
+                    "imageHeight": "",
+                    "linkUrlTemplate": "{{ @ }}",
+                    "linkTextTemplate": "{{ @ }}",
+                    "linkTitleTemplate": "{{ @ }}",
+                    "linkOpenInNewTab": true,
+                    "type": "string",
+                    "displayAs": "string",
+                    "visible": true,
+                    "order": 16,
+                    "title": "client_driver",
+                    "allowSearch": false,
+                    "alignContent": "left",
+                    "allowHTML": false,
+                    "highlightLinks": false,
+                    "useMonospaceFont": false,
+                    "preserveWhitespace": false
+                  },
+                  {
+                    "fieldName": "total_duration_ms",
+                    "numberFormat": "0",
+                    "booleanValues": [
+                      "false",
+                      "true"
+                    ],
+                    "imageUrlTemplate": "{{ @ }}",
+                    "imageTitleTemplate": "{{ @ }}",
+                    "imageWidth": "",
+                    "imageHeight": "",
+                    "linkUrlTemplate": "{{ @ }}",
+                    "linkTextTemplate": "{{ @ }}",
+                    "linkTitleTemplate": "{{ @ }}",
+                    "linkOpenInNewTab": true,
+                    "type": "integer",
+                    "displayAs": "number",
+                    "visible": true,
+                    "order": 17,
+                    "title": "total_duration_ms",
+                    "allowSearch": false,
+                    "alignContent": "right",
+                    "allowHTML": false,
+                    "highlightLinks": false,
+                    "useMonospaceFont": false,
+                    "preserveWhitespace": false
+                  },
+                  {
+                    "fieldName": "waiting_for_compute_duration_ms",
+                    "numberFormat": "0",
+                    "booleanValues": [
+                      "false",
+                      "true"
+                    ],
+                    "imageUrlTemplate": "{{ @ }}",
+                    "imageTitleTemplate": "{{ @ }}",
+                    "imageWidth": "",
+                    "imageHeight": "",
+                    "linkUrlTemplate": "{{ @ }}",
+                    "linkTextTemplate": "{{ @ }}",
+                    "linkTitleTemplate": "{{ @ }}",
+                    "linkOpenInNewTab": true,
+                    "type": "integer",
+                    "displayAs": "number",
+                    "visible": true,
+                    "order": 18,
+                    "title": "waiting_for_compute_duration_ms",
+                    "allowSearch": false,
+                    "alignContent": "right",
+                    "allowHTML": false,
+                    "highlightLinks": false,
+                    "useMonospaceFont": false,
+                    "preserveWhitespace": false
+                  },
+                  {
+                    "fieldName": "waiting_at_capacity_duration_ms",
+                    "numberFormat": "0",
+                    "booleanValues": [
+                      "false",
+                      "true"
+                    ],
+                    "imageUrlTemplate": "{{ @ }}",
+                    "imageTitleTemplate": "{{ @ }}",
+                    "imageWidth": "",
+                    "imageHeight": "",
+                    "linkUrlTemplate": "{{ @ }}",
+                    "linkTextTemplate": "{{ @ }}",
+                    "linkTitleTemplate": "{{ @ }}",
+                    "linkOpenInNewTab": true,
+                    "type": "integer",
+                    "displayAs": "number",
+                    "visible": true,
+                    "order": 19,
+                    "title": "waiting_at_capacity_duration_ms",
+                    "allowSearch": false,
+                    "alignContent": "right",
+                    "allowHTML": false,
+                    "highlightLinks": false,
+                    "useMonospaceFont": false,
+                    "preserveWhitespace": false
+                  },
+                  {
+                    "fieldName": "execution_duration_ms",
+                    "numberFormat": "0",
+                    "booleanValues": [
+                      "false",
+                      "true"
+                    ],
+                    "imageUrlTemplate": "{{ @ }}",
+                    "imageTitleTemplate": "{{ @ }}",
+                    "imageWidth": "",
+                    "imageHeight": "",
+                    "linkUrlTemplate": "{{ @ }}",
+                    "linkTextTemplate": "{{ @ }}",
+                    "linkTitleTemplate": "{{ @ }}",
+                    "linkOpenInNewTab": true,
+                    "type": "integer",
+                    "displayAs": "number",
+                    "visible": true,
+                    "order": 20,
+                    "title": "execution_duration_ms",
+                    "allowSearch": false,
+                    "alignContent": "right",
+                    "allowHTML": false,
+                    "highlightLinks": false,
+                    "useMonospaceFont": false,
+                    "preserveWhitespace": false
+                  },
+                  {
+                    "fieldName": "compilation_duration_ms",
+                    "numberFormat": "0",
+                    "booleanValues": [
+                      "false",
+                      "true"
+                    ],
+                    "imageUrlTemplate": "{{ @ }}",
+                    "imageTitleTemplate": "{{ @ }}",
+                    "imageWidth": "",
+                    "imageHeight": "",
+                    "linkUrlTemplate": "{{ @ }}",
+                    "linkTextTemplate": "{{ @ }}",
+                    "linkTitleTemplate": "{{ @ }}",
+                    "linkOpenInNewTab": true,
+                    "type": "integer",
+                    "displayAs": "number",
+                    "visible": true,
+                    "order": 21,
+                    "title": "compilation_duration_ms",
+                    "allowSearch": false,
+                    "alignContent": "right",
+                    "allowHTML": false,
+                    "highlightLinks": false,
+                    "useMonospaceFont": false,
+                    "preserveWhitespace": false
+                  },
+                  {
+                    "fieldName": "total_task_duration_ms",
+                    "numberFormat": "0",
+                    "booleanValues": [
+                      "false",
+                      "true"
+                    ],
+                    "imageUrlTemplate": "{{ @ }}",
+                    "imageTitleTemplate": "{{ @ }}",
+                    "imageWidth": "",
+                    "imageHeight": "",
+                    "linkUrlTemplate": "{{ @ }}",
+                    "linkTextTemplate": "{{ @ }}",
+                    "linkTitleTemplate": "{{ @ }}",
+                    "linkOpenInNewTab": true,
+                    "type": "integer",
+                    "displayAs": "number",
+                    "visible": true,
+                    "order": 22,
+                    "title": "total_task_duration_ms",
+                    "allowSearch": false,
+                    "alignContent": "right",
+                    "allowHTML": false,
+                    "highlightLinks": false,
+                    "useMonospaceFont": false,
+                    "preserveWhitespace": false
+                  },
+                  {
+                    "fieldName": "result_fetch_duration_ms",
+                    "numberFormat": "0",
+                    "booleanValues": [
+                      "false",
+                      "true"
+                    ],
+                    "imageUrlTemplate": "{{ @ }}",
+                    "imageTitleTemplate": "{{ @ }}",
+                    "imageWidth": "",
+                    "imageHeight": "",
+                    "linkUrlTemplate": "{{ @ }}",
+                    "linkTextTemplate": "{{ @ }}",
+                    "linkTitleTemplate": "{{ @ }}",
+                    "linkOpenInNewTab": true,
+                    "type": "integer",
+                    "displayAs": "number",
+                    "visible": true,
+                    "order": 23,
+                    "title": "result_fetch_duration_ms",
+                    "allowSearch": false,
+                    "alignContent": "right",
+                    "allowHTML": false,
+                    "highlightLinks": false,
+                    "useMonospaceFont": false,
+                    "preserveWhitespace": false
+                  },
+                  {
+                    "fieldName": "start_time",
+                    "dateTimeFormat": "DD/MM/YYYY HH:mm:ss.SSS",
+                    "booleanValues": [
+                      "false",
+                      "true"
+                    ],
+                    "imageUrlTemplate": "{{ @ }}",
+                    "imageTitleTemplate": "{{ @ }}",
+                    "imageWidth": "",
+                    "imageHeight": "",
+                    "linkUrlTemplate": "{{ @ }}",
+                    "linkTextTemplate": "{{ @ }}",
+                    "linkTitleTemplate": "{{ @ }}",
+                    "linkOpenInNewTab": true,
+                    "type": "datetime",
+                    "displayAs": "datetime",
+                    "visible": true,
+                    "order": 24,
+                    "title": "start_time",
+                    "allowSearch": false,
+                    "alignContent": "right",
+                    "allowHTML": false,
+                    "highlightLinks": false,
+                    "useMonospaceFont": false,
+                    "preserveWhitespace": false
+                  },
+                  {
+                    "fieldName": "end_time",
+                    "dateTimeFormat": "DD/MM/YYYY HH:mm:ss.SSS",
+                    "booleanValues": [
+                      "false",
+                      "true"
+                    ],
+                    "imageUrlTemplate": "{{ @ }}",
+                    "imageTitleTemplate": "{{ @ }}",
+                    "imageWidth": "",
+                    "imageHeight": "",
+                    "linkUrlTemplate": "{{ @ }}",
+                    "linkTextTemplate": "{{ @ }}",
+                    "linkTitleTemplate": "{{ @ }}",
+                    "linkOpenInNewTab": true,
+                    "type": "datetime",
+                    "displayAs": "datetime",
+                    "visible": true,
+                    "order": 25,
+                    "title": "end_time",
+                    "allowSearch": false,
+                    "alignContent": "right",
+                    "allowHTML": false,
+                    "highlightLinks": false,
+                    "useMonospaceFont": false,
+                    "preserveWhitespace": false
+                  },
+                  {
+                    "fieldName": "update_time",
+                    "dateTimeFormat": "DD/MM/YYYY HH:mm:ss.SSS",
+                    "booleanValues": [
+                      "false",
+                      "true"
+                    ],
+                    "imageUrlTemplate": "{{ @ }}",
+                    "imageTitleTemplate": "{{ @ }}",
+                    "imageWidth": "",
+                    "imageHeight": "",
+                    "linkUrlTemplate": "{{ @ }}",
+                    "linkTextTemplate": "{{ @ }}",
+                    "linkTitleTemplate": "{{ @ }}",
+                    "linkOpenInNewTab": true,
+                    "type": "datetime",
+                    "displayAs": "datetime",
+                    "visible": true,
+                    "order": 26,
+                    "title": "update_time",
+                    "allowSearch": false,
+                    "alignContent": "right",
+                    "allowHTML": false,
+                    "highlightLinks": false,
+                    "useMonospaceFont": false,
+                    "preserveWhitespace": false
+                  },
+                  {
+                    "fieldName": "read_partitions",
+                    "numberFormat": "0",
+                    "booleanValues": [
+                      "false",
+                      "true"
+                    ],
+                    "imageUrlTemplate": "{{ @ }}",
+                    "imageTitleTemplate": "{{ @ }}",
+                    "imageWidth": "",
+                    "imageHeight": "",
+                    "linkUrlTemplate": "{{ @ }}",
+                    "linkTextTemplate": "{{ @ }}",
+                    "linkTitleTemplate": "{{ @ }}",
+                    "linkOpenInNewTab": true,
+                    "type": "integer",
+                    "displayAs": "number",
+                    "visible": true,
+                    "order": 27,
+                    "title": "read_partitions",
+                    "allowSearch": false,
+                    "alignContent": "right",
+                    "allowHTML": false,
+                    "highlightLinks": false,
+                    "useMonospaceFont": false,
+                    "preserveWhitespace": false
+                  },
+                  {
+                    "fieldName": "pruned_files",
+                    "numberFormat": "0",
+                    "booleanValues": [
+                      "false",
+                      "true"
+                    ],
+                    "imageUrlTemplate": "{{ @ }}",
+                    "imageTitleTemplate": "{{ @ }}",
+                    "imageWidth": "",
+                    "imageHeight": "",
+                    "linkUrlTemplate": "{{ @ }}",
+                    "linkTextTemplate": "{{ @ }}",
+                    "linkTitleTemplate": "{{ @ }}",
+                    "linkOpenInNewTab": true,
+                    "type": "integer",
+                    "displayAs": "number",
+                    "visible": true,
+                    "order": 28,
+                    "title": "pruned_files",
+                    "allowSearch": false,
+                    "alignContent": "right",
+                    "allowHTML": false,
+                    "highlightLinks": false,
+                    "useMonospaceFont": false,
+                    "preserveWhitespace": false
+                  },
+                  {
+                    "fieldName": "read_files",
+                    "numberFormat": "0",
+                    "booleanValues": [
+                      "false",
+                      "true"
+                    ],
+                    "imageUrlTemplate": "{{ @ }}",
+                    "imageTitleTemplate": "{{ @ }}",
+                    "imageWidth": "",
+                    "imageHeight": "",
+                    "linkUrlTemplate": "{{ @ }}",
+                    "linkTextTemplate": "{{ @ }}",
+                    "linkTitleTemplate": "{{ @ }}",
+                    "linkOpenInNewTab": true,
+                    "type": "integer",
+                    "displayAs": "number",
+                    "visible": true,
+                    "order": 29,
+                    "title": "read_files",
+                    "allowSearch": false,
+                    "alignContent": "right",
+                    "allowHTML": false,
+                    "highlightLinks": false,
+                    "useMonospaceFont": false,
+                    "preserveWhitespace": false
+                  },
+                  {
+                    "fieldName": "read_rows",
+                    "numberFormat": "0",
+                    "booleanValues": [
+                      "false",
+                      "true"
+                    ],
+                    "imageUrlTemplate": "{{ @ }}",
+                    "imageTitleTemplate": "{{ @ }}",
+                    "imageWidth": "",
+                    "imageHeight": "",
+                    "linkUrlTemplate": "{{ @ }}",
+                    "linkTextTemplate": "{{ @ }}",
+                    "linkTitleTemplate": "{{ @ }}",
+                    "linkOpenInNewTab": true,
+                    "type": "integer",
+                    "displayAs": "number",
+                    "visible": true,
+                    "order": 30,
+                    "title": "read_rows",
+                    "allowSearch": false,
+                    "alignContent": "right",
+                    "allowHTML": false,
+                    "highlightLinks": false,
+                    "useMonospaceFont": false,
+                    "preserveWhitespace": false
+                  },
+                  {
+                    "fieldName": "produced_rows",
+                    "numberFormat": "0",
+                    "booleanValues": [
+                      "false",
+                      "true"
+                    ],
+                    "imageUrlTemplate": "{{ @ }}",
+                    "imageTitleTemplate": "{{ @ }}",
+                    "imageWidth": "",
+                    "imageHeight": "",
+                    "linkUrlTemplate": "{{ @ }}",
+                    "linkTextTemplate": "{{ @ }}",
+                    "linkTitleTemplate": "{{ @ }}",
+                    "linkOpenInNewTab": true,
+                    "type": "integer",
+                    "displayAs": "number",
+                    "visible": true,
+                    "order": 31,
+                    "title": "produced_rows",
+                    "allowSearch": false,
+                    "alignContent": "right",
+                    "allowHTML": false,
+                    "highlightLinks": false,
+                    "useMonospaceFont": false,
+                    "preserveWhitespace": false
+                  },
+                  {
+                    "fieldName": "read_bytes",
+                    "numberFormat": "0",
+                    "booleanValues": [
+                      "false",
+                      "true"
+                    ],
+                    "imageUrlTemplate": "{{ @ }}",
+                    "imageTitleTemplate": "{{ @ }}",
+                    "imageWidth": "",
+                    "imageHeight": "",
+                    "linkUrlTemplate": "{{ @ }}",
+                    "linkTextTemplate": "{{ @ }}",
+                    "linkTitleTemplate": "{{ @ }}",
+                    "linkOpenInNewTab": true,
+                    "type": "integer",
+                    "displayAs": "number",
+                    "visible": true,
+                    "order": 32,
+                    "title": "read_bytes",
+                    "allowSearch": false,
+                    "alignContent": "right",
+                    "allowHTML": false,
+                    "highlightLinks": false,
+                    "useMonospaceFont": false,
+                    "preserveWhitespace": false
+                  },
+                  {
+                    "fieldName": "read_io_cache_percent",
+                    "numberFormat": "0",
+                    "booleanValues": [
+                      "false",
+                      "true"
+                    ],
+                    "imageUrlTemplate": "{{ @ }}",
+                    "imageTitleTemplate": "{{ @ }}",
+                    "imageWidth": "",
+                    "imageHeight": "",
+                    "linkUrlTemplate": "{{ @ }}",
+                    "linkTextTemplate": "{{ @ }}",
+                    "linkTitleTemplate": "{{ @ }}",
+                    "linkOpenInNewTab": true,
+                    "type": "integer",
+                    "displayAs": "number",
+                    "visible": true,
+                    "order": 33,
+                    "title": "read_io_cache_percent",
+                    "allowSearch": false,
+                    "alignContent": "right",
+                    "allowHTML": false,
+                    "highlightLinks": false,
+                    "useMonospaceFont": false,
+                    "preserveWhitespace": false
+                  },
+                  {
+                    "fieldName": "from_result_cache",
+                    "booleanValues": [
+                      "false",
+                      "true"
+                    ],
+                    "imageUrlTemplate": "{{ @ }}",
+                    "imageTitleTemplate": "{{ @ }}",
+                    "imageWidth": "",
+                    "imageHeight": "",
+                    "linkUrlTemplate": "{{ @ }}",
+                    "linkTextTemplate": "{{ @ }}",
+                    "linkTitleTemplate": "{{ @ }}",
+                    "linkOpenInNewTab": true,
+                    "type": "boolean",
+                    "displayAs": "boolean",
+                    "visible": true,
+                    "order": 34,
+                    "title": "from_result_cache",
+                    "allowSearch": false,
+                    "alignContent": "right",
+                    "allowHTML": false,
+                    "highlightLinks": false,
+                    "useMonospaceFont": false,
+                    "preserveWhitespace": false
+                  },
+                  {
+                    "fieldName": "spilled_local_bytes",
+                    "numberFormat": "0",
+                    "booleanValues": [
+                      "false",
+                      "true"
+                    ],
+                    "imageUrlTemplate": "{{ @ }}",
+                    "imageTitleTemplate": "{{ @ }}",
+                    "imageWidth": "",
+                    "imageHeight": "",
+                    "linkUrlTemplate": "{{ @ }}",
+                    "linkTextTemplate": "{{ @ }}",
+                    "linkTitleTemplate": "{{ @ }}",
+                    "linkOpenInNewTab": true,
+                    "type": "integer",
+                    "displayAs": "number",
+                    "visible": true,
+                    "order": 35,
+                    "title": "spilled_local_bytes",
+                    "allowSearch": false,
+                    "alignContent": "right",
+                    "allowHTML": false,
+                    "highlightLinks": false,
+                    "useMonospaceFont": false,
+                    "preserveWhitespace": false
+                  },
+                  {
+                    "fieldName": "written_bytes",
+                    "numberFormat": "0",
+                    "booleanValues": [
+                      "false",
+                      "true"
+                    ],
+                    "imageUrlTemplate": "{{ @ }}",
+                    "imageTitleTemplate": "{{ @ }}",
+                    "imageWidth": "",
+                    "imageHeight": "",
+                    "linkUrlTemplate": "{{ @ }}",
+                    "linkTextTemplate": "{{ @ }}",
+                    "linkTitleTemplate": "{{ @ }}",
+                    "linkOpenInNewTab": true,
+                    "type": "integer",
+                    "displayAs": "number",
+                    "visible": true,
+                    "order": 36,
+                    "title": "written_bytes",
+                    "allowSearch": false,
+                    "alignContent": "right",
+                    "allowHTML": false,
+                    "highlightLinks": false,
+                    "useMonospaceFont": false,
+                    "preserveWhitespace": false
+                  },
+                  {
+                    "fieldName": "shuffle_read_bytes",
+                    "numberFormat": "0",
+                    "booleanValues": [
+                      "false",
+                      "true"
+                    ],
+                    "imageUrlTemplate": "{{ @ }}",
+                    "imageTitleTemplate": "{{ @ }}",
+                    "imageWidth": "",
+                    "imageHeight": "",
+                    "linkUrlTemplate": "{{ @ }}",
+                    "linkTextTemplate": "{{ @ }}",
+                    "linkTitleTemplate": "{{ @ }}",
+                    "linkOpenInNewTab": true,
+                    "type": "integer",
+                    "displayAs": "number",
+                    "visible": true,
+                    "order": 37,
+                    "title": "shuffle_read_bytes",
+                    "allowSearch": false,
+                    "alignContent": "right",
+                    "allowHTML": false,
+                    "highlightLinks": false,
+                    "useMonospaceFont": false,
+                    "preserveWhitespace": false
+                  },
+                  {
+                    "fieldName": "query_source",
+                    "booleanValues": [
+                      "false",
+                      "true"
+                    ],
+                    "imageUrlTemplate": "{{ @ }}",
+                    "imageTitleTemplate": "{{ @ }}",
+                    "imageWidth": "",
+                    "imageHeight": "",
+                    "linkUrlTemplate": "{{ @ }}",
+                    "linkTextTemplate": "{{ @ }}",
+                    "linkTitleTemplate": "{{ @ }}",
+                    "linkOpenInNewTab": true,
+                    "type": "complex",
+                    "displayAs": "json",
+                    "visible": true,
+                    "order": 38,
+                    "title": "query_source",
+                    "allowSearch": false,
+                    "alignContent": "left",
+                    "allowHTML": false,
+                    "highlightLinks": false,
+                    "useMonospaceFont": false,
+                    "preserveWhitespace": false
+                  },
+                  {
+                    "fieldName": "executed_as_user_id",
+                    "booleanValues": [
+                      "false",
+                      "true"
+                    ],
+                    "imageUrlTemplate": "{{ @ }}",
+                    "imageTitleTemplate": "{{ @ }}",
+                    "imageWidth": "",
+                    "imageHeight": "",
+                    "linkUrlTemplate": "{{ @ }}",
+                    "linkTextTemplate": "{{ @ }}",
+                    "linkTitleTemplate": "{{ @ }}",
+                    "linkOpenInNewTab": true,
+                    "type": "string",
+                    "displayAs": "string",
+                    "visible": true,
+                    "order": 39,
+                    "title": "executed_as_user_id",
+                    "allowSearch": false,
+                    "alignContent": "left",
+                    "allowHTML": false,
+                    "highlightLinks": false,
+                    "useMonospaceFont": false,
+                    "preserveWhitespace": false
+                  },
+                  {
+                    "fieldName": "executed_as",
+                    "booleanValues": [
+                      "false",
+                      "true"
+                    ],
+                    "imageUrlTemplate": "{{ @ }}",
+                    "imageTitleTemplate": "{{ @ }}",
+                    "imageWidth": "",
+                    "imageHeight": "",
+                    "linkUrlTemplate": "{{ @ }}",
+                    "linkTextTemplate": "{{ @ }}",
+                    "linkTitleTemplate": "{{ @ }}",
+                    "linkOpenInNewTab": true,
+                    "type": "string",
+                    "displayAs": "string",
+                    "visible": true,
+                    "order": 40,
+                    "title": "executed_as",
+                    "allowSearch": false,
+                    "alignContent": "left",
+                    "allowHTML": false,
+                    "highlightLinks": false,
+                    "useMonospaceFont": false,
+                    "preserveWhitespace": false
+                  },
+                  {
+                    "fieldName": "written_rows",
+                    "numberFormat": "0",
+                    "booleanValues": [
+                      "false",
+                      "true"
+                    ],
+                    "imageUrlTemplate": "{{ @ }}",
+                    "imageTitleTemplate": "{{ @ }}",
+                    "imageWidth": "",
+                    "imageHeight": "",
+                    "linkUrlTemplate": "{{ @ }}",
+                    "linkTextTemplate": "{{ @ }}",
+                    "linkTitleTemplate": "{{ @ }}",
+                    "linkOpenInNewTab": true,
+                    "type": "integer",
+                    "displayAs": "number",
+                    "visible": true,
+                    "order": 41,
+                    "title": "written_rows",
+                    "allowSearch": false,
+                    "alignContent": "right",
+                    "allowHTML": false,
+                    "highlightLinks": false,
+                    "useMonospaceFont": false,
+                    "preserveWhitespace": false
+                  },
+                  {
+                    "fieldName": "written_files",
+                    "numberFormat": "0",
+                    "booleanValues": [
+                      "false",
+                      "true"
+                    ],
+                    "imageUrlTemplate": "{{ @ }}",
+                    "imageTitleTemplate": "{{ @ }}",
+                    "imageWidth": "",
+                    "imageHeight": "",
+                    "linkUrlTemplate": "{{ @ }}",
+                    "linkTextTemplate": "{{ @ }}",
+                    "linkTitleTemplate": "{{ @ }}",
+                    "linkOpenInNewTab": true,
+                    "type": "integer",
+                    "displayAs": "number",
+                    "visible": true,
+                    "order": 42,
+                    "title": "written_files",
+                    "allowSearch": false,
+                    "alignContent": "right",
+                    "allowHTML": false,
+                    "highlightLinks": false,
+                    "useMonospaceFont": false,
+                    "preserveWhitespace": false
+                  },
+                  {
+                    "fieldName": "cache_origin_statement_id",
+                    "booleanValues": [
+                      "false",
+                      "true"
+                    ],
+                    "imageUrlTemplate": "{{ @ }}",
+                    "imageTitleTemplate": "{{ @ }}",
+                    "imageWidth": "",
+                    "imageHeight": "",
+                    "linkUrlTemplate": "{{ @ }}",
+                    "linkTextTemplate": "{{ @ }}",
+                    "linkTitleTemplate": "{{ @ }}",
+                    "linkOpenInNewTab": true,
+                    "type": "string",
+                    "displayAs": "string",
+                    "visible": true,
+                    "order": 43,
+                    "title": "cache_origin_statement_id",
+                    "allowSearch": false,
+                    "alignContent": "left",
+                    "allowHTML": false,
+                    "highlightLinks": false,
+                    "useMonospaceFont": false,
+                    "preserveWhitespace": false
+                  },
+                  {
+                    "fieldName": "query_parameters",
+                    "booleanValues": [
+                      "false",
+                      "true"
+                    ],
+                    "imageUrlTemplate": "{{ @ }}",
+                    "imageTitleTemplate": "{{ @ }}",
+                    "imageWidth": "",
+                    "imageHeight": "",
+                    "linkUrlTemplate": "{{ @ }}",
+                    "linkTextTemplate": "{{ @ }}",
+                    "linkTitleTemplate": "{{ @ }}",
+                    "linkOpenInNewTab": true,
+                    "type": "complex",
+                    "displayAs": "json",
+                    "visible": true,
+                    "order": 44,
+                    "title": "query_parameters",
+                    "allowSearch": false,
+                    "alignContent": "left",
+                    "allowHTML": false,
+                    "highlightLinks": false,
+                    "useMonospaceFont": false,
+                    "preserveWhitespace": false
+                  },
+                  {
+                    "fieldName": "query_tags",
+                    "booleanValues": [
+                      "false",
+                      "true"
+                    ],
+                    "imageUrlTemplate": "{{ @ }}",
+                    "imageTitleTemplate": "{{ @ }}",
+                    "imageWidth": "",
+                    "imageHeight": "",
+                    "linkUrlTemplate": "{{ @ }}",
+                    "linkTextTemplate": "{{ @ }}",
+                    "linkTitleTemplate": "{{ @ }}",
+                    "linkOpenInNewTab": true,
+                    "type": "complex",
+                    "displayAs": "json",
+                    "visible": true,
+                    "order": 45,
+                    "title": "query_tags",
+                    "allowSearch": false,
+                    "alignContent": "left",
+                    "allowHTML": false,
+                    "highlightLinks": false,
+                    "useMonospaceFont": false,
+                    "preserveWhitespace": false
+                  }
+                ]
+              },
+              "invisibleColumns": [
+                {
+                  "booleanValues": [
+                    "false",
+                    "true"
+                  ],
+                  "imageUrlTemplate": "{{ @ }}",
+                  "imageTitleTemplate": "{{ @ }}",
+                  "imageWidth": "",
+                  "imageHeight": "",
+                  "linkUrlTemplate": "{{ @ }}",
+                  "linkTextTemplate": "{{ @ }}",
+                  "linkTitleTemplate": "{{ @ }}",
+                  "linkOpenInNewTab": true,
+                  "name": "dashboard_url",
+                  "type": "string",
+                  "displayAs": "string",
+                  "order": 5,
+                  "title": "dashboard_url",
+                  "allowSearch": false,
+                  "alignContent": "left",
+                  "allowHTML": false,
+                  "highlightLinks": false,
+                  "useMonospaceFont": false,
+                  "preserveWhitespace": false
+                },
+                {
+                  "booleanValues": [
+                    "false",
+                    "true"
+                  ],
+                  "imageUrlTemplate": "{{ @ }}",
+                  "imageTitleTemplate": "{{ @ }}",
+                  "imageWidth": "",
+                  "imageHeight": "",
+                  "linkUrlTemplate": "{{ @ }}",
+                  "linkTextTemplate": "{{ @ }}",
+                  "linkTitleTemplate": "{{ @ }}",
+                  "linkOpenInNewTab": true,
+                  "name": "account_id",
+                  "type": "string",
+                  "displayAs": "string",
+                  "order": 6,
+                  "title": "account_id",
+                  "allowSearch": false,
+                  "alignContent": "left",
+                  "allowHTML": false,
+                  "highlightLinks": false,
+                  "useMonospaceFont": false,
+                  "preserveWhitespace": false
+                },
+                {
+                  "booleanValues": [
+                    "false",
+                    "true"
+                  ],
+                  "imageUrlTemplate": "{{ @ }}",
+                  "imageTitleTemplate": "{{ @ }}",
+                  "imageWidth": "",
+                  "imageHeight": "",
+                  "linkUrlTemplate": "{{ @ }}",
+                  "linkTextTemplate": "{{ @ }}",
+                  "linkTitleTemplate": "{{ @ }}",
+                  "linkOpenInNewTab": true,
+                  "name": "compute",
+                  "type": "complex",
+                  "displayAs": "json",
+                  "order": 11,
+                  "title": "compute",
+                  "allowSearch": false,
+                  "alignContent": "left",
+                  "allowHTML": false,
+                  "highlightLinks": false,
+                  "useMonospaceFont": false,
+                  "preserveWhitespace": false
+                },
+                {
+                  "booleanValues": [
+                    "false",
+                    "true"
+                  ],
+                  "imageUrlTemplate": "{{ @ }}",
+                  "imageTitleTemplate": "{{ @ }}",
+                  "imageWidth": "",
+                  "imageHeight": "",
+                  "linkUrlTemplate": "{{ @ }}",
+                  "linkTextTemplate": "{{ @ }}",
+                  "linkTitleTemplate": "{{ @ }}",
+                  "linkOpenInNewTab": true,
+                  "name": "workspace_url",
+                  "type": "string",
+                  "displayAs": "string",
+                  "order": 46,
+                  "title": "workspace_url",
+                  "allowSearch": false,
+                  "alignContent": "left",
+                  "allowHTML": false,
+                  "highlightLinks": false,
+                  "useMonospaceFont": false,
+                  "preserveWhitespace": false
+                },
+                {
+                  "booleanValues": [
+                    "false",
+                    "true"
+                  ],
+                  "imageUrlTemplate": "{{ @ }}",
+                  "imageTitleTemplate": "{{ @ }}",
+                  "imageWidth": "",
+                  "imageHeight": "",
+                  "linkUrlTemplate": "{{ @ }}",
+                  "linkTextTemplate": "{{ @ }}",
+                  "linkTitleTemplate": "{{ @ }}",
+                  "linkOpenInNewTab": true,
+                  "name": "statement_url",
+                  "type": "string",
+                  "displayAs": "string",
+                  "order": 47,
+                  "title": "statement_url",
+                  "allowSearch": false,
+                  "alignContent": "left",
+                  "allowHTML": false,
+                  "highlightLinks": false,
+                  "useMonospaceFont": false,
+                  "preserveWhitespace": false
+                },
+                {
+                  "numberFormat": "0.00",
+                  "booleanValues": [
+                    "false",
+                    "true"
+                  ],
+                  "imageUrlTemplate": "{{ @ }}",
+                  "imageTitleTemplate": "{{ @ }}",
+                  "imageWidth": "",
+                  "imageHeight": "",
+                  "linkUrlTemplate": "{{ @ }}",
+                  "linkTextTemplate": "{{ @ }}",
+                  "linkTitleTemplate": "{{ @ }}",
+                  "linkOpenInNewTab": true,
+                  "name": "total_duration_sec",
+                  "type": "float",
+                  "displayAs": "number",
+                  "order": 48,
+                  "title": "total_duration_sec",
+                  "allowSearch": false,
+                  "alignContent": "right",
+                  "allowHTML": false,
+                  "highlightLinks": false,
+                  "useMonospaceFont": false,
+                  "preserveWhitespace": false
+                },
+                {
+                  "booleanValues": [
+                    "false",
+                    "true"
+                  ],
+                  "imageUrlTemplate": "{{ @ }}",
+                  "imageTitleTemplate": "{{ @ }}",
+                  "imageWidth": "",
+                  "imageHeight": "",
+                  "linkUrlTemplate": "{{ @ }}",
+                  "linkTextTemplate": "{{ @ }}",
+                  "linkTitleTemplate": "{{ @ }}",
+                  "linkOpenInNewTab": true,
+                  "name": "warehouse_url",
+                  "type": "string",
+                  "displayAs": "string",
+                  "order": 49,
+                  "title": "warehouse_url",
+                  "allowSearch": false,
+                  "alignContent": "left",
+                  "allowHTML": false,
+                  "highlightLinks": false,
+                  "useMonospaceFont": false,
+                  "preserveWhitespace": false
+                }
+              ],
+              "allowHTMLByDefault": false,
+              "itemsPerPage": 25,
+              "paginationSize": "default",
+              "condensed": true,
+              "withRowNumber": false,
+              "frame": {
+                "showTitle": true,
+                "showDescription": true,
+                "title": "Statement level detail",
+                "description": "Statement level details for Dashboard ID and time range above"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 2,
+            "width": 6,
+            "height": 15
+          }
+        },
+        {
+          "widget": {
+            "name": "899d3053",
+            "queries": [
+              {
+                "name": "parameter_dashboards/01f0b5dbfe57149cab30e34b2a55e4c6/datasets/01f0b5dd70dc1f2aaba819c8fdbbc8be_time_range",
+                "query": {
+                  "datasetName": "273f7b81",
+                  "parameters": [
+                    {
+                      "name": "time_range",
+                      "keyword": "time_range"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              },
+              {
+                "name": "parameter_dashboards/01f0b5dbfe57149cab30e34b2a55e4c6/datasets/01f0b5dc33791b289a5c8e6c39d5af43_time_range",
+                "query": {
+                  "datasetName": "91008fdb",
+                  "parameters": [
+                    {
+                      "name": "time_range",
+                      "keyword": "time_range"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "filter-date-range-picker",
+              "encodings": {
+                "fields": [
+                  {
+                    "parameterName": "time_range",
+                    "queryName": "parameter_dashboards/01f0b5dbfe57149cab30e34b2a55e4c6/datasets/01f0b5dd70dc1f2aaba819c8fdbbc8be_time_range"
+                  },
+                  {
+                    "parameterName": "time_range",
+                    "queryName": "parameter_dashboards/01f0b5dbfe57149cab30e34b2a55e4c6/datasets/01f0b5dc33791b289a5c8e6c39d5af43_time_range"
+                  }
+                ]
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Time range",
+                "showDescription": false
+              }
+            }
+          },
+          "position": {
+            "x": 4,
+            "y": 1,
+            "width": 2,
+            "height": 1
+          }
+        },
+        {
+          "widget": {
+            "name": "04aab364",
+            "multilineTextboxSpec": {
+              "lines": [
+                "## Statement Level Detail\n",
+                "\n",
+                "This shows all individual statements for a dashboard.\n",
+                "\n",
+                "It is generally used as a drill-down from the other pages."
+              ]
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 0,
+            "width": 4,
+            "height": 2
+          }
+        }
+      ],
+      "pageType": "PAGE_TYPE_CANVAS"
+    }
+  ],
+  "uiSettings": {
+    "theme": {
+      "widgetHeaderAlignment": "ALIGNMENT_UNSPECIFIED"
+    },
+    "genieSpace": {
+      "isEnabled": false
+    }
+  }
+}
